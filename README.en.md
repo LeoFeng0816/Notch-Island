@@ -8,6 +8,8 @@ Notch Island is a macOS notch-area utility built with Swift, AppKit, and SwiftUI
 
 This project is inspired by the iPhone Dynamic Island. It does not receive iPhone Live Activities or arbitrary third-party notifications: the activities shown are the ones supported by the app itself.
 
+> **Known issue: Shazam song recognition is temporarily unavailable.** The system Control Center and alternative recognition flows still require real-device testing and should not be relied on.
+
 ## Features
 
 - **Notch-aware layout:** measures the display's safe areas and adjusts to the reported notch geometry. Inactive widgets stay below the menu bar; active music and timers can use the spaces beside the notch.

@@ -4,6 +4,8 @@
 
 ## 繁體中文
 
+**已知限制：Shazam 歌曲辨識目前暫時無法使用。** 系統控制中心及其他備援辨識流程仍待實機驗證，請勿依賴這些功能。
+
 首個公開版本，提供瀏海區域的音樂與計時活動、可自訂小工具、剪貼簿歷史、截圖與錄影入口，以及三種介面語言。
 
 **安裝：**下載 `NotchIsland-0.1.0.dmg`，開啟後依箭頭將 Notch Island 拖至 Applications，再從「應用程式」開啟。此版本僅以 ad-hoc 簽章，**未經 Apple 公證**；若你信任來源，macOS 阻擋時請依 [Apple 的說明](https://support.apple.com/zh-tw/102445)在「隱私權與安全性」個別允許此 App。
@@ -13,6 +15,8 @@
 **驗證與限制：**874 項離線測試通過；DMG 掛載、排版資料與 Apple Silicon 自我測試通過，Intel 切片僅完成靜態檢查。實際 Finder 安裝流程、截圖、錄影與系統音樂辨識仍需在解鎖的 Mac 實機驗證。ShazamKit 曾回傳錯誤 202；AudD 僅以合成音訊及模擬網路測試，需要自行提供金鑰及同意音訊上傳。詳情和權限說明見[繁體中文 README](../README.md)。
 
 ## English
+
+**Known issue: Shazam song recognition is temporarily unavailable.** The system Control Center and alternative recognition flows still require real-device testing and should not be relied on.
 
 The first public version includes music and timer activities around the notch, configurable widgets, clipboard history, screenshot and screen-recording entry points, and three interface languages.
 

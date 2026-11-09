@@ -10,6 +10,8 @@ Notch Island 是以 Swift、AppKit 與 SwiftUI 製作的 macOS 瀏海區域工�
 
 > **v0.1.0 是第一個公開版本。** 安裝檔使用 ad-hoc 簽章，**沒有 Developer ID 簽章，也沒有經過 Apple 公證**，第一次開啟會被 macOS 阻擋，請依下方「[安裝](#安裝)」的 Apple 官方步驟個別允許。不建議停用 Gatekeeper。尚未實機驗證的功能列在「[已知限制](#已知限制)」。發行說明見 [docs/RELEASE-NOTES-v0.1.0.md](docs/RELEASE-NOTES-v0.1.0.md)。
 
+> **已知限制：Shazam 歌曲辨識目前暫時無法使用。** 系統控制中心及其他備援辨識流程仍待實機驗證，請勿依賴這些功能。
+
 ## 功能
 
 | 狀態 | 行為 |
