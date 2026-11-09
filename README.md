@@ -2,10 +2,13 @@
 
 [English](README.en.md) · 繁體中文
 
-Notch Island 是以 Swift、AppKit 與 SwiftUI 製作的 macOS 瀏海區域工具，可顯示音樂播放與計時活動，並提供天氣、電池、股票、時鐘、行事曆等小工具及快捷功能，支援英文、繁體與簡體中文。它並非 iPhone 即時活動的完整移植；部分整合需要系統權限，也有待進一步實機測試。應用程式未經 Apple 公證。
-這是一個實用的範圍內實作，**並非** iPhone 動態島的完整功能複製：macOS 沒有公開 API 讓第三方 App 讀取 iPhone 或其他 App 的 Live Activities，所以這裡的「即時活動」只有本 App 自己的倒數計時、碼表，以及「音樂」／Spotify 播放狀態；沒有通知攔截或第三方 App 整合。
+Notch Island 是以 Swift、AppKit 與 SwiftUI 製作的 macOS 瀏海區域工具，可顯示音樂播放與計時活動，並提供天氣、電池、股票、時鐘、行事曆等小工具及快捷功能，支援英文、繁體與簡體中文。部分整合需要系統權限，也有待進一步實機測試。
+
+這是範圍明確的實作，**並非** iPhone 動態島的完整複製：macOS 沒有公開 API 讓第三方 App 讀取 iPhone 或其他 App 的 Live Activities，所以這裡的「即時活動」只有本 App 自己的倒數計時、碼表，以及支援來源的播放狀態（「音樂」、Spotify，及選用的 Chrome／Safari YouTube／YouTube Music）；沒有通知攔截或其他第三方 App 整合。
 
 ![Notch Island 圖示](docs/notch-island-icon.png)
+
+> **v0.1.0 是第一個公開版本。** 安裝檔使用 ad-hoc 簽章，**沒有 Developer ID 簽章，也沒有經過 Apple 公證**，第一次開啟會被 macOS 阻擋，請依下方「[安裝](#安裝)」的 Apple 官方步驟個別允許。不建議停用 Gatekeeper。尚未實機驗證的功能列在「[已知限制](#已知限制)」。發行說明見 [docs/RELEASE-NOTES-v0.1.0.md](docs/RELEASE-NOTES-v0.1.0.md)。
 
 ## 功能
 
@@ -26,7 +29,7 @@ Notch Island 是以 Swift、AppKit 與 SwiftUI 製作的 macOS 瀏海區域工�
 
 ### 即時活動
 
-- **倒數計時器**：**沒在跑時放在「計時器」小工具**（5／10／25 分鐘預設、±1 分鐘、開始），開始後才成為即時活動（瀏海兩側指示＋「即時活動」頁的計時器面板，可暫停／繼續／重設）；「即時活動」頁只顯示正在執行的計時器／碼表，兩者都沒在跑時只顯示音樂。選單列圖示也可「開始 5 分鐘計時」。舊使用者若小工具未滿 4 個，第一次啟動新版會自動加入計時器小工具一次（之後關閉不會再被加回；已滿 4 個則不會擠掉既有選擇）。以系統時鐘計算，以系統時鐘計算（不受 UI 卡頓影響），時間到會播放提示音並在瀏海上顯示「完成」約 12 秒。上次選擇的時長會被記住。
+- **倒數計時器**：**沒在跑時放在「計時器」小工具**（5／10／25 分鐘預設、±1 分鐘、開始），開始後才成為即時活動（瀏海兩側指示＋「即時活動」頁的計時器面板，可暫停／繼續／重設）；「即時活動」頁只顯示正在執行的計時器／碼表，兩者都沒在跑時只顯示音樂。選單列圖示也可「開始 5 分鐘計時」。舊使用者若小工具未滿 4 個，第一次啟動新版會自動加入計時器小工具一次（之後關閉不會再被加回；已滿 4 個則不會擠掉既有選擇）。以系統時鐘計算（不受 UI 卡頓影響），時間到會播放提示音並在瀏海上顯示「完成」約 12 秒。上次選擇的時長會被記住。
 - **碼表**：開始／暫停／繼續／分圈／重設，以系統時鐘計算；狀態（含分圈，最多 50 筆）存在本機，**結束 App 再開啟會繼續計時**。執行中或暫停時，瀏海右側以青色顯示經過時間；可在展開面板「即時活動」頁的「計時器／碼表」切換、碼表小工具，或選單列圖示選單操作。
 - **音樂整合**：支援 Apple「音樂」與 Spotify，顯示曲名、演出者、封面、播放進度，並可上一首／播放暫停／下一首。只在播放器已開啟時才查詢，不會主動啟動播放器。
 - **瀏覽器媒體（選用，預設關閉）**：Google Chrome 與 Safari 中的 **YouTube Music**（`https://music.youtube.com/…`，含 Chrome 安裝的 YouTube Music 網頁 App／PWA，其起始網址為 `https://music.youtube.com/?source=pwa`）與 **YouTube** 影片（`https://www.youtube.com/watch?…`、`/shorts/…`、`m.youtube.com`）。顯示 Media Session 提供的真實曲名／演出者／封面、播放中或暫停、進度，並可播放／暫停、下一首、上一首（YouTube 沒有播放清單時，「上一首」會回到影片開頭）。只有真正播放中的分頁才會成為瀏海兩側的即時活動；暫停的分頁只在之前顯示過時保留在面板內。詳見下方「瀏覽器媒體設定」。
@@ -60,7 +63,7 @@ Notch Island 是以 Swift、AppKit 與 SwiftUI 製作的 macOS 瀏海區域工�
 
 - **Open-Meteo**：城市搜尋使用 `geocoding-api.open-meteo.com/v1/search`，天氣使用 `api.open-meteo.com/v1/forecast`（`current` + `daily`，`timezone=auto`）。官方免費方案限非商業用途並要求署名；若用於商業用途需另行取得授權。
 - **Alpha Vantage**：有正式文件的 REST API。每個代號只發 1 次 `TIME_SERIES_DAILY` 請求，同時取得最新收盤、前一日收盤（計算漲跌）與走勢圖用的歷史收盤，所以畫圖**不會多耗配額**；走勢圖只用回傳的實際收盤價畫，資料少於 2 筆就不畫。免費金鑰目前每天約 25 次請求、每秒約 1 次，所以最多 3 個代號、每 3 小時更新一次，請求之間間隔 1.2 秒；遇到請求上限或金鑰錯誤會立即停止後續請求。免費資料是**每日收盤，不是即時報價**（以「截至 11月6日」標示最近交易日）。支援的市場以 Alpha Vantage 為準（美股如 `AAPL`，部分海外市場使用後綴，例如 `TSCO.LON`）；**台股（如 2330）不一定有資料**，查無資料時會顯示「找不到」。
-- **Yahoo Finance（預設）**：使用 `https://query1.finance.yahoo.com/v8/finance/chart/<代號>?range=3mo&interval=1d`，每個代號 1 次請求，取得 `regularMarketPrice`、`regularMarketTime`（作為「截至」時間）、幣別與每日收盤（走勢圖只用回傳的非空收盤；漲跌＝價格 − 價格所在交易日之前的最後一個實際收盤）。**這是非官方、沒有文件的端點**：Yahoo 隨時可能限流（HTTP 429）、更改或封鎖；報價依交易所延遲（通常 15–20 分鐘）或為收盤價，**不保證正確或即時**，請勿用於交易決策。請求使用 App 自己的 User-Agent（`NotchIsland/0.3`），不冒充瀏覽器、不帶 cookie、不需要也不讀取任何金鑰；代號只允許字母、數字與 `.-^=`，並以路徑編碼（`^`→`%5E`、`=`→`%3D`）。2026-11-07 實測：`2330.TW` 2135 TWD −4.69%、`AAPL` 342.37 USD −0.52%（與 Yahoo 回報值一致）；同一天也遇到短暫的 429，App 會顯示「已達請求上限，請稍後再試」。查無代號時 Yahoo 回 404 與 `Not Found`，顯示「找不到」。
+- **Yahoo Finance（預設）**：使用 `https://query1.finance.yahoo.com/v8/finance/chart/<代號>?range=3mo&interval=1d`，每個代號 1 次請求，取得 `regularMarketPrice`、`regularMarketTime`（作為「截至」時間）、幣別與每日收盤（走勢圖只用回傳的非空收盤；漲跌＝價格 − 價格所在交易日之前的最後一個實際收盤）。**這是非官方、沒有文件的端點**：Yahoo 隨時可能限流（HTTP 429）、更改或封鎖；報價依交易所延遲（通常 15–20 分鐘）或為收盤價，**不保證正確或即時**，請勿用於交易決策。請求使用 App 自己的 User-Agent（`NotchIsland/0.1`），不冒充瀏覽器、不帶 cookie、不需要也不讀取任何金鑰；代號只允許字母、數字與 `.-^=`，並以路徑編碼（`^`→`%5E`、`=`→`%3D`）。2026-11-07 實測：`2330.TW` 2135 TWD −4.69%、`AAPL` 342.37 USD −0.52%（與 Yahoo 回報值一致）；同一天也遇到短暫的 429，App 會顯示「已達請求上限，請稍後再試」。查無代號時 Yahoo 回 404 與 `Not Found`，顯示「找不到」。
 - 曾評估過 Stooq（端點已失效）。Alpha Vantage 保留為有正式文件的選項。
 
 ### 隱私
@@ -101,7 +104,26 @@ Notch Island 是以 Swift、AppKit 與 SwiftUI 製作的 macOS 瀏海區域工�
 
 第一次啟動（含從舊版更新的使用者）會顯示一次「歡迎使用瀏海島」：選擇語言、逐項說明各權限用途（傳送按鍵、螢幕錄製、麥克風、通知；自動化、系統音訊、定位／行事曆由 macOS 在第一次使用時詢問），**每項只在你按「允許」時才請求**，並可設定剪貼簿紀錄與保存期限。它不會重設或改寫任何既有設定（測試驗證），選單列「歡迎導覽…」可再開啟。
 
-## 安裝（DMG）
+## 安裝
+
+需要 macOS 14 Sonoma 或更新版本。安裝檔是 universal（Apple Silicon 與 Intel）；發行前只在 Apple Silicon 執行過自我測試，Intel 切片只做了結構與簽章的靜態檢查。
+
+1. 從本儲存庫的 GitHub Releases 下載 `NotchIsland-0.1.0.dmg`。可在「終端機」執行 `shasum -a 256 ~/Downloads/NotchIsland-0.1.0.dmg`，核對結果與發行頁公布的 SHA-256 相同。
+2. 開啟 DMG，依視窗中的箭頭把 **Notch Island** 拖到右側的 **Applications**（應用程式）資料夾，然後退出 DMG。
+3. 從「應用程式」資料夾開啟 Notch Island。因為這個版本**沒有 Developer ID 簽章、沒有經過 Apple 公證**，macOS 會顯示無法驗證開發者或是否含惡意軟體的警告，並不會開啟。若你信任這個來源，依 Apple〈[在 Mac 上安全地開啟 App](https://support.apple.com/zh-tw/102445)〉的步驟個別允許：
+   1. 先嘗試開啟一次 App（看到警告後關閉它，不要移到垃圾桶）。
+   2. 打開「系統設定」，按一下「隱私權與安全性」，向下捲動，按一下 Notch Island 旁的「強制打開」。
+   3. 警告會再次出現，確定要打開時按「打開」。
+   這只會為這個 App 建立例外。**不建議停用 Gatekeeper**，也不需要在終端機移除隔離屬性。
+4. Notch Island 不顯示在 Dock，而是在選單列右側出現小膠囊圖示；首次啟動會顯示歡迎導覽。各項權限只在你按下對應的「允許」或開始使用該功能時才詢問（見下方「[權限](#權限)」）。
+
+**更新與權限**：ad-hoc 簽章的授權綁在每一份建置的雜湊上。安裝新版本（或自行重建）後，即使「系統設定」中的舊開關看起來仍是開啟，也可能需要移除後重新授權「螢幕與系統錄音」「輔助使用」等權限（原因見下方「[為什麼『已經允許了』還被要求權限](#為什麼已經允許了還被要求權限2026-11-09-實測)」）。偏好設定沿用 bundle ID `local.notchisland.app`；更新後是否能讀取既有鑰匙圈項目仍需實機驗證，必要時可重新輸入金鑰。
+
+**版本編號**：公開版本從 v0.1.0 開始。公開前曾在私人開發中使用 0.3.x 的內部版本號；v0.1.0 的建置編號（`CFBundleVersion`）是 6，高於最後的內部版本 0.3.2（5），bundle ID 不變。從內部版本更新的流程仍需實機驗證。
+
+**移除**：結束 App（選單列圖示 › 結束）後，把「應用程式」中的 Notch Island 移到垃圾桶。剪貼簿紀錄（若曾開啟）位於 `~/Library/Application Support/NotchIsland/Clipboard`，可一併刪除；偏好設定與鑰匙圈項目（`local.notchisland.*`）不會自動移除。
+
+## 自行打包 DMG（開發者）
 
 第一次建置 DMG 時，在專案根目錄建立工具的虛擬環境。之後只需執行最後一行。
 
@@ -111,7 +133,7 @@ build/dmg-tools/bin/python -m pip install -r scripts/dmg-requirements.txt
 scripts/make_dmg.sh
 ```
 
-開啟 `dist/NotchIsland-<版本>.dmg`，依 Finder 裡的箭頭把 Notch Island 拖到「應用程式」。打包後會驗證映像校驗碼、Finder 排版、兩個可見項目、兩個架構的簽章與 App 的資源，並執行本機架構的 `--self-test`。Apple Silicon 會執行 ARM64，Intel 切片保留並經結構驗證。舊版打包時透過 Rosetta 自測曾觸發 macOS 的相容性通知。新版在 Apple Silicon 的打包流程不再啟動 Rosetta。[Apple 的 Rosetta 相容性說明](https://support.apple.com/en-us/102527)
+產物是 `dist/NotchIsland-<版本>.dmg`（版本取自 `Resources/Info.plist` 的 `CFBundleShortVersionString`），Finder 視窗內有 App、Applications 捷徑、箭頭與中英文拖曳安裝說明，磁碟區圖示與 App 圖示都是 `Resources/NotchIsland.icns`。打包後會以唯讀方式掛載並驗證映像校驗碼、Finder 排版、兩個可見項目、磁碟區圖示、App 版本與 DMG 名稱一致、兩個架構的簽章與 App 的資源，並執行本機架構的 `--self-test`。Apple Silicon 會執行 ARM64，Intel 切片保留並經結構驗證。舊版打包時透過 Rosetta 自測曾觸發 macOS 的相容性通知。新版在 Apple Silicon 的打包流程不再啟動 Rosetta。[Apple 的 Rosetta 相容性說明](https://support.apple.com/en-us/102527)
 
 需要重製圖示時，以 `xcrun swift scripts/render_artwork.swift icon build/NotchIsland.iconset` 產生 16 到 1024 px 資源，再執行 `iconutil --convert icns build/NotchIsland.iconset --output Resources/NotchIsland.icns`。DMG 背景由打包腳本繪製。
 
@@ -131,9 +153,9 @@ scripts/make_dmg.sh
 1. 在「系統設定 › 隱私權與安全性 › 螢幕與系統錄音」（及「輔助使用」）移除舊的瀏海島，加入**目前使用的這一份** App 並重新開啟。之後只要再重建或換 DMG，就要重做一次。
 2. 用穩定的簽章身分建置，例如以免費 Apple ID 登入 Xcode 取得的「Apple Development」憑證：`NOTCHISLAND_SIGN_IDENTITY="Apple Development: 名稱 (TEAMID)" ./build.sh`。designated requirement 改成以憑證辨識後，授權在重建後仍有效（仍需授權一次）。這次沒有替你建立任何憑證或更改鑰匙圈。
 
-這次 DMG 內的 App 使用 ad-hoc 簽章，Gatekeeper 評估未通過。若使用自建或已驗證來源與校驗碼的私人副本，首次嘗試開啟後，可依 Apple 說明到「系統設定 › 隱私權與安全性 › 安全性」按「開啟」或「仍要打開」，再確認這個 App 的個別例外。[Apple 的安全開啟說明](https://support.apple.com/en-us/102445)
+v0.1.0 DMG 內的 App 使用 ad-hoc 簽章，DMG 本身未簽章，兩者的 Gatekeeper 評估（`spctl`）都是 rejected，也沒有附加公證票證。使用者端的個別允許步驟見上方「[安裝](#安裝)」。
 
-若將來公開發行，使用以下 Developer ID 簽章與公證流程。
+以下 Developer ID 簽章與公證流程需要付費的 Apple Developer Program 會員資格，**v0.1.0 沒有使用**；保留給日後取得 Developer ID 時使用。
 
 1. 加入 Apple Developer Program。在自己的團隊建立 **Developer ID Application** 憑證，將憑證與相應私鑰安裝到 Keychain。執行 `security find-identity -v -p codesigning` 確認該身分。[Apple 的 Developer ID 說明](https://developer.apple.com/developer-id/)
 2. 在 Certificates, Identifiers & Profiles 註冊 App ID，並在 App Services 勾選 ShazamKit。App 的 bundle ID 要與登記的 ID 一致。可在建置時用 `NOTCHISLAND_BUNDLE_ID` 指定團隊自己的 ID。更換 ID 會使用新的偏好設定與鑰匙圈項目。預設 `local.notchisland.app` 用於保留目前本機版本的身分。[ShazamKit App ID 設定](https://developer.apple.com/help/account/services/shazamkit/)
@@ -150,16 +172,20 @@ scripts/make_dmg.sh --notarize   # 重新簽章並送交 Apple、等候核准、
 
 `--release` 對 App 啟用 Hardened Runtime、secure timestamp 和音訊輸入、自動化、定位、行事曆權限，並以同一 Developer ID 簽署 DMG。`--notarize` 提交最外層 DMG，取得 Accepted 後以 `stapler` 附加並驗證票證，確認 Gatekeeper 評估，再輸出成品。如果 Apple 拒絕，依輸出的 submission ID 執行 `xcrun notarytool log <submission-id> --keychain-profile notch-island-notary` 檢查原因。發行前再在一台獨立 Mac 上開啟安裝包，從「應用程式」執行並驗證包括 Shazam 在內的權限流程。[Apple 的簽章指引](https://developer.apple.com/documentation/xcode/creating-distribution-signed-code-for-the-mac/) · [Apple 的發行驗證指引](https://developer.apple.com/documentation/xcode/packaging-mac-software-for-distribution)
 
-## 發布到 GitHub 前
+## 發布前的機密與隱私掃描
 
 ```bash
 python3 -I scripts/secret_scan.py                    # 專案
 python3 -I scripts/secret_scan.py /Volumes/…/Notch\ Island.app   # 掛載的 DMG 內容
 ```
 
-掃描 API 金鑰／權杖（AWS、GitHub、OpenAI/Anthropic 形式、Slack、Google、Discord webhook、私鑰）、`api_key = "…"` 類指定、電子郵件、`/Users/<名稱>` 絕對路徑，並列出個人截圖／影片與 `.DS_Store`。**只輸出規則、檔名、行號與長度，絕不輸出值**（有測試驗證）。2026-11-09（0.3.2）的結果：專案、`build/NotchIsland.app` 與唯讀掛載的 DMG 都沒有機密規則命中；測試用的假金鑰改為執行時組字串，避免誤報。2026-11-08 的結果：程式碼與建置出的 App 沒有發現項目（Alpha Vantage 官方公開的 `demo` 金鑰與測試用 URL 已列入允許清單）；只列出個人截圖、影片與 `.DS_Store`。
+掃描 API 金鑰／權杖（AWS、GitHub、OpenAI/Anthropic 形式、Slack、Google、Discord webhook、私鑰）、`api_key = "…"` 類指定、電子郵件、`/Users/<名稱>` 絕對路徑，並列出個人截圖／影片與 `.DS_Store`。**只輸出規則、檔名、行號與長度，絕不輸出值**（有測試驗證）。
 
-`.gitignore` 已排除：`build/`、`dist/`、`*.dmg`、`.DS_Store`、`screenshots/`、影片、`NotchIsland-實際畫面.jpg`，以及含個人工作流程細節的 `CLAUDE.md`（檔案都保留在本機，沒有刪除）。使用者輸入的 Alpha Vantage 金鑰只存在 macOS 鑰匙圈，不會出現在偏好設定、專案或 DMG。
+2026-11-09（v0.1.0）的結果：專案、`build/NotchIsland.app` 與唯讀掛載的 `NotchIsland-0.1.0.dmg` 都沒有機密規則命中。DMG 只有 App（執行檔、Info.plist、三語用途字串、圖示、簽章資料）、Applications 捷徑，以及 Finder 排版用的隱藏 `.DS_Store`、`.background.tiff`、`.VolumeIcon.icns`；排版檔與執行檔中沒有 `/Users/` 路徑。DMG 不含截圖、影片、剪貼簿紀錄、偏好設定或任何 API 金鑰。另以 `git grep --cached` 檢查 Git 暫存區，沒有個人路徑、個人電子郵件或金鑰格式。掃描器列出的項目只有已被 `.gitignore` 排除的本機截圖／影片、`.DS_Store`，以及專案圖示 `docs/notch-island-icon.png`（已人工確認是程式圖示）。
+
+較早的內部版本結果：0.3.2：專案、`build/NotchIsland.app` 與唯讀掛載的 DMG 都沒有機密規則命中；測試用的假金鑰改為執行時組字串，避免誤報。2026-11-08 的結果：程式碼與建置出的 App 沒有發現項目（Alpha Vantage 官方公開的 `demo` 金鑰與測試用 URL 已列入允許清單）；只列出個人截圖、影片與 `.DS_Store`。
+
+`.gitignore` 已排除：`build/`、`dist/`、`*.dmg`、`.DS_Store`、`screenshots/`、影片、`NotchIsland-實際畫面.jpg`，以及含個人工作流程細節的開發交接檔 `CLAUDE.md`（這些檔案只在開發者本機，不在公開儲存庫）。使用者輸入的 Alpha Vantage 金鑰只存在 macOS 鑰匙圈，不會出現在偏好設定、專案或 DMG。
 
 **仍需人工檢查**：README 與程式中的範例文字、測試資料（城市、股票代號等公開資訊）、Git 歷史（確認提交不含被排除的檔案）、`Resources/` 內容、任何之後新增的檔案；掃描是啟發式的，**不保證完全沒有機密**。
 
@@ -219,9 +245,9 @@ Tests/run_tests.sh --live   # 另外實際呼叫 Open-Meteo、Yahoo Finance（23
 
 控制流程另有測試：按下後立即顯示要求狀態、按下前的取樣不會確認或還原、只有觀察到才確認、送出失敗／送達逾時／2.5 秒無變化都會恢復實際狀態、外部變更取消等待、三連點依序為暫停→播放→暫停、舊命令晚到的失敗不影響新命令、佇列中的舊點擊被合併、下一首以曲目改變確認、明確 play／pause JavaScript 的冪等性（YouTube Music 按鈕只在狀態不同時按）、讀回腳本格式與逾時、單一分頁讀取不送任何命令、腳本編譯快取。
 
-0.3.2 另外涵蓋：`screencapture` 診斷原文分類（取消、忙碌、拒絕、讀不到畫面、未知狀態、被訊號結束）；在沒有權限時取消仍是「已取消」；ad-hoc／Developer ID／Apple Development 的簽章判斷，以及授權是否綁定建置；錄影入口（有權限才直接開工具列、參數不含自動開始錄影或錄音）與 QuickTime `-1743` 判斷；控制中心「辨識音樂」的決策（只按唯一模組或「開始聆聽」、停用或多個候選不按、面板外的同名按鈕不按、三語與省略號變體的「聆聽中」確認、解析本機 `MusicRecognition.loctable`）；AudD 的 WAV／multipart 格式、錯誤碼 900／901／902／其他、空結果、非 JSON，以及以合成 440 Hz 音訊和 `URLProtocol` 模擬網路跑完整流程。完整流程確認：未同意或未存金鑰時不碰音訊、不連線；麥克風被拒時不擷取；只用選定音源；只送一次、最多 10 秒；靜音不上傳；取消時清空片段且不上傳；離線、上限錯誤如實顯示。另含三語揭露文字與 Info.plist 用途字串。**測試不連到 AudD，也不使用真實音訊。**
+截圖、錄影與辨識相關測試另外涵蓋：`screencapture` 診斷原文分類（取消、忙碌、拒絕、讀不到畫面、未知狀態、被訊號結束）；在沒有權限時取消仍是「已取消」；ad-hoc／Developer ID／Apple Development 的簽章判斷，以及授權是否綁定建置；錄影入口（有權限才直接開工具列、參數不含自動開始錄影或錄音）與 QuickTime `-1743` 判斷；控制中心「辨識音樂」的決策（只按唯一模組或「開始聆聽」、停用或多個候選不按、面板外的同名按鈕不按、三語與省略號變體的「聆聽中」確認、解析本機 `MusicRecognition.loctable`）；AudD 的 WAV／multipart 格式、錯誤碼 900／901／902／其他、空結果、非 JSON，以及以合成 440 Hz 音訊和 `URLProtocol` 模擬網路跑完整流程。完整流程確認：未同意或未存金鑰時不碰音訊、不連線；麥克風被拒時不擷取；只用選定音源；只送一次、最多 10 秒；靜音不上傳；取消時清空片段且不上傳；離線、上限錯誤如實顯示。另含三語揭露文字與 Info.plist 用途字串，以及發行版本檢查（`CFBundleShortVersionString` 為 0.1.0、建置編號高於內部版本、bundle ID 不變、User-Agent 版本）。**測試不連到 AudD，也不使用真實音訊。**
 
-2026-11-09 離線測試 868 項全部通過。測試不會對實際的控制中心、瀏覽器或音樂播放器送出操作。
+2026-11-09（v0.1.0）離線測試 874 項全部通過。測試不會對實際的控制中心、瀏覽器或音樂播放器送出操作。
 
 ## 權限
 
@@ -261,7 +287,7 @@ Tests/run_tests.sh --live   # 另外實際呼叫 Open-Meteo、Yahoo Finance（23
 
 這個選項預設關閉。按下按鈕時可能會開啟控制中心。如果找不到按鈕，可先手動開啟「播放中」再試；也可另開「以系統媒體鍵控制播放」作備援。只有能確定沒按到控制中心按鈕時才會補送媒體鍵。這個模式只控制播放，不會提供曲目、封面或進度。
 
-交接與待驗證事項見 [CLAUDE.md](CLAUDE.md)。
+尚待實機驗證的項目整理在下方「[已知限制](#已知限制)」與 [v0.1.0 發行說明](docs/RELEASE-NOTES-v0.1.0.md)。
 
 ### 2026-11-08 修正：時間軸、懸停、上一首／下一首、股票搜尋、真實音量
 
@@ -333,25 +359,25 @@ Resources/                Info.plist 與各語系 InfoPlist.strings
 build.sh                  以 swiftc 建立 .app bundle 並簽章
 scripts/                  make_dmg.sh（universal DMG）、secret_scan.py、圖示繪製
 Tests/                    main.swift＋run_tests.sh（離線測試）、render_pages.swift＋render_pages.sh（離屏版面）
-screenshots/              本機執行畫面（不納入版控）
+docs/                     專案圖示與發行說明
 ```
 
 ## 已知限制
 
 - 這台 Mac 的 ad-hoc 版本查詢 Shazam 曲庫時回傳 HTTP 401。Mac 的控制中心可開啟「辨識音樂」，由系統顯示結果。
 - 錄影工具列已在 macOS 27.0.1 開啟驗證，實際錄製、停止與儲存尚未測試。剪貼簿自動貼上、截圖、Shazam 音源權限與歡迎導覽的實際操作仍待驗證。
-- 0.3.2（2026-11-09）：整個工作期間螢幕都鎖定，以下**未在實機畫面驗證**：截圖的實際取消與失敗訊息、錄影工具列是否以錄影模式出現、QuickTime 路徑與其自動化提示、控制中心「辨識音樂」的實際按下與「聆聽中」讀取、AudD 與隱私說明視窗的實際外觀。島內頁面只以離屏繪製檢查版面。
+- 截圖、錄影、辨識音樂與 AudD 流程（2026-11-09 開發時螢幕鎖定），以下**未在實機畫面驗證**：截圖的實際取消與失敗訊息、錄影工具列是否以錄影模式出現、QuickTime 路徑與其自動化提示、控制中心「辨識音樂」的實際按下與「聆聽中」讀取、AudD 與隱私說明視窗的實際外觀。島內頁面只以離屏繪製檢查版面。
 - AudD 未用真實金鑰或真實音訊測試（沒有預算、也不得對使用者音訊做第三方傳送），只有合成音訊與模擬網路。實際辨識率、AudD 是否接受 16 kHz／48 kHz 單聲道 WAV、試用額度如何計算，都需要你用自己的帳號確認。
-- DMG 未以 Developer ID 簽章、未公證，其他 Mac 會被 Gatekeeper 阻擋。
+- v0.1.0 DMG 未以 Developer ID 簽章、未公證，Gatekeeper 會阻擋首次開啟，需依「[安裝](#安裝)」的步驟個別允許。DMG 只在開發這台 Apple Silicon Mac 驗證過掛載與自我測試；尚未在另一台 Mac（Apple Silicon 或 Intel）實際下載、安裝並走完 Gatekeeper 流程。
 
 - 2026-11-08 已在 macOS 27.0.1 實測 YouTube Music 獨立網頁 App 的上一首／下一首。仍待實測：真實音量擷取的權限流程與實際音訊、其他 App 的切歌、自動換歌時進度是否完全不再疊加、偏右懸停、股票搜尋的實際結果。
 
 - **無法用公開 API 讀取全系統「正在播放」**；私有 MediaRemote 在 macOS 15.4 以後（含這台 macOS 27.0.1）不提供資料給第三方 App。這台 Mac 上要顯示 YouTube Music 的曲名與進度，仍需要 Chrome 的「允許 Apple 事件中的 JavaScript」與自動化權限；媒體鍵只能解決「控制」，不能解決「讀取」。
 - 媒體鍵控制的對象由 macOS 決定（目前的 Now Playing App），與島嶼顯示的來源可能不同（例如島嶼顯示 Spotify，但 macOS 把按鍵交給最近播放的 Chrome 分頁）。
-- 以下尚未實機操作驗證，需要你用 Computer Use 測試：媒體鍵權限流程與實際控制、新的播放器 API 控制、展開時瀏海旁狀態圖示的可點性、第 5 個小工具的提示視窗、計時器小工具。
+- 以下尚未實機操作驗證：媒體鍵權限流程與實際控制、新的播放器 API 控制、展開時瀏海旁狀態圖示的可點性、第 5 個小工具的提示視窗、計時器小工具。
 
 - macOS 沒有公開 API 取得全系統「正在播放」資訊；只支援「音樂」、Spotify，以及（選用）Chrome／Safari 中的 YouTube／YouTube Music。其他瀏覽器、網站與 App 不會顯示。
-- **瀏覽器媒體的實際播放偵測與控制尚未在這台 Mac 端到端驗證**：整合期間桌面處於鎖定狀態，無法授予自動化權限、開啟「允許 Apple 事件中的 JavaScript」或實際播放；目前驗證到的是腳本的編譯、固定 JavaScript 在模擬頁面上的執行與解析邏輯。YouTube／YouTube Music 改版（按鈕選擇器）可能讓「下一首／上一首」失效，失效時會如實顯示「無法傳送到播放器」。
+- **瀏覽器媒體只做過部分實機驗證**：2026-11-08 在 macOS 27.0.1 的 Chrome YouTube Music 獨立網頁 App 實測從瀏海島切換上一首／下一首，並曾確認可顯示曲名與歌手。Safari、一般 YouTube 分頁、播放／暫停的端到端延遲與自動換歌時的進度顯示，仍只有腳本編譯、模擬頁面上的固定 JavaScript 與解析邏輯測試。YouTube／YouTube Music 改版（按鈕選擇器）可能讓「下一首／上一首」失效，失效時會如實顯示「無法傳送到播放器」。
 - 點擊立即展開、定位提示、行事曆提示、新設定區塊與新小工具卡的實際畫面互動，同樣因桌面鎖定**尚未手動操作驗證**，只有自動化的點擊判定與邏輯測試。
 - 無瀏海螢幕上，閒置時游標位於選單列中央 110 pt 區域時會接收點擊（作為啟用區）；該區通常是空的，但選單項目很多時可能重疊。
 - 展開時面板位於選單列上方的視窗層級；部分全螢幕 App 或其他瀏海工具可能互相遮蓋。
@@ -360,5 +386,4 @@ screenshots/              本機執行畫面（不納入版控）
 - 股價預設的 Yahoo Finance 是非官方端點，可能隨時限流或失效，報價延遲且不保證；Alpha Vantage 需要自行申請免費金鑰，免費配額用完後要等隔天。兩者都不是即時報價。
 - 天氣與股價需要網路；離線時顯示「無法取得」。
 - 小工具頁一次並排顯示所有已開啟的小工具（目前最多 4 個，全部是小型正方形卡）。小工具頁的面板比即時活動頁高 18 pt（只往選單列下方長）。
-- 本次更新（YouTube／點擊展開／定位／行事曆／時鐘／Yahoo）**沒有新增截圖或錄影**：桌面鎖定，且依指示不操作畫面、不繞過鎖定。`screenshots/MacBook-瀏海島實機情境渲染圖.png` 是渲染圖，不是實際截圖。
-- 截圖：`screenshots/iOS風格小工具-繁中.png`、`iOS风格小组件-秒表进行中-简中.png`、`ios-style-widgets-en.png` 是在獨立 bundle ID 的預覽副本中，擷取島嶼視窗本身（不含其他螢幕內容）；股價使用 Alpha Vantage 官方 demo 金鑰，所以只有 IBM 有資料，AAPL 如實顯示「無法取得」。白色背景是視窗透明區域，不是真實選單列。
+- 公開儲存庫與 DMG **不含任何實機截圖或螢幕錄影**；README 只放程式圖示。開發期間的截圖只保存在開發者本機。

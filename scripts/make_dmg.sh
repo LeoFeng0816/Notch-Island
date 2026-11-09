@@ -45,10 +45,11 @@ cleanup() { hdiutil detach "$MOUNT" -quiet >/dev/null 2>&1 || true; rm -rf "$STA
 trap cleanup EXIT
 
 ditto --norsrc --noextattr "$APP" "$STAGE/Notch Island.app"
-xcrun swift "$ROOT/scripts/render_artwork.swift" installer "$STAGE"
+xcrun swift "$ROOT/scripts/render_artwork.swift" installer "$STAGE" "$VERSION"
 CANDIDATE="$STAGE/$APP_NAME-$VERSION.dmg"
 "$PYTHON" -I -m dmgbuild -s "$ROOT/scripts/dmg_settings.py" \
   -D "app=$STAGE/Notch Island.app" -D "background=$STAGE/installer.png" \
+  -D "icon=$ROOT/Resources/NotchIsland.icns" \
   "Notch Island $VERSION" "$CANDIDATE"
 
 if [[ $RELEASE == 1 ]]; then
@@ -71,6 +72,7 @@ from ds_store import DSStore
 mount = Path(sys.argv[1])
 assert {p.name for p in mount.iterdir() if not p.name.startswith(".")} == {"Notch Island.app", "Applications"}
 assert any((mount / name).is_file() for name in (".background.png", ".background.tiff"))
+assert (mount / ".VolumeIcon.icns").is_file()
 with DSStore.open(str(mount / ".DS_Store"), "r") as layout:
     app = layout["Notch Island.app"]["Iloc"]
     link = layout["Applications"]["Iloc"]
@@ -81,6 +83,7 @@ ARCHS=" $(lipo -archs "$BIN") "
 [[ "$ARCHS" == *' arm64 '* && "$ARCHS" == *' x86_64 '* ]]
 codesign --verify --deep --strict --all-architectures "$INSTALLED"
 plutil -lint -s "$INSTALLED/Contents/Info.plist"
+[[ "$(plutil -extract CFBundleShortVersionString raw "$INSTALLED/Contents/Info.plist")" == "$VERSION" ]]
 if strings -a "$BIN" | grep '/Users/' >/dev/null; then
   echo 'Unexpected absolute home path in executable.' >&2
   exit 1

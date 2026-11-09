@@ -1,0 +1,23 @@
+# Notch Island v0.1.0
+
+[繁體中文](#繁體中文) · [English](#english)
+
+## 繁體中文
+
+首個公開版本，提供瀏海區域的音樂與計時活動、可自訂小工具、剪貼簿歷史、截圖與錄影入口，以及三種介面語言。
+
+**安裝：**下載 `NotchIsland-0.1.0.dmg`，開啟後依箭頭將 Notch Island 拖至 Applications，再從「應用程式」開啟。此版本僅以 ad-hoc 簽章，**未經 Apple 公證**；若你信任來源，macOS 阻擋時請依 [Apple 的說明](https://support.apple.com/zh-tw/102445)在「隱私權與安全性」個別允許此 App。
+
+**SHA-256：** `cc041f6e59d38637fcb27a790e0f3ab00353abe280afe74f0230de2160a23ebc`
+
+**驗證與限制：**874 項離線測試通過；DMG 掛載、排版資料與 Apple Silicon 自我測試通過，Intel 切片僅完成靜態檢查。實際 Finder 安裝流程、截圖、錄影與系統音樂辨識仍需在解鎖的 Mac 實機驗證。ShazamKit 曾回傳錯誤 202；AudD 僅以合成音訊及模擬網路測試，需要自行提供金鑰及同意音訊上傳。詳情和權限說明見[繁體中文 README](../README.md)。
+
+## English
+
+The first public version includes music and timer activities around the notch, configurable widgets, clipboard history, screenshot and screen-recording entry points, and three interface languages.
+
+**Installation:** Download `NotchIsland-0.1.0.dmg`, open it, and drag Notch Island to Applications using the arrow. Open the app from Applications. This build is ad-hoc signed and **not notarized by Apple**; if you trust its source and macOS blocks it, follow [Apple's instructions](https://support.apple.com/en-us/102445) to allow this app individually in Privacy & Security.
+
+**SHA-256:** `cc041f6e59d38637fcb27a790e0f3ab00353abe280afe74f0230de2160a23ebc`
+
+**Verification and limitations:** 874 offline tests passed; the DMG mount, layout metadata, and Apple silicon self-test passed. The Intel slice was checked statically only. The Finder installation flow, screenshot, screen recording, and system music recognition still require real-device testing on an unlocked Mac. ShazamKit returned error 202 during development; AudD has only been tested with synthetic audio and mocked network responses and requires your own token and consent to upload audio. See the [English README](../README.en.md) for details and permissions.

@@ -15,7 +15,7 @@ struct URLSessionHTTPClient: HTTPClient {
         config.timeoutIntervalForResource = 20
         config.httpCookieStorage = nil
         config.urlCache = nil
-        config.httpAdditionalHeaders = ["User-Agent": "NotchIsland/0.3 (macOS)"]
+        config.httpAdditionalHeaders = ["User-Agent": "NotchIsland/0.1 (macOS)"]
         return URLSession(configuration: config)
     }()
 

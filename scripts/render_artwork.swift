@@ -65,7 +65,7 @@ func label(_ string: String, at origin: CGPoint, size: CGFloat, weight: NSFont.W
     ])
 }
 
-func drawInstaller(_ context: CGContext) {
+func drawInstaller(_ context: CGContext, version: String?) {
     let background = CGPath(rect: CGRect(x: 0, y: 0, width: 620, height: 360), transform: nil)
     gradient(context, background, [color(0xF6F9FE), color(0xDEE9F9)],
              from: CGPoint(x: 40, y: 360), to: CGPoint(x: 590, y: 0))
@@ -73,9 +73,19 @@ func drawInstaller(_ context: CGContext) {
     let header = CGPath(rect: CGRect(x: 0, y: 238, width: 620, height: 122), transform: nil)
     gradient(context, header, [color(0x14223A), color(0x263D65)],
              from: CGPoint(x: 0, y: 360), to: CGPoint(x: 620, y: 238))
-    fill(context, rounded(33, 321, 24, 3, 1.5), color(0x8ED9FF))
-    label("Notch Island", at: CGPoint(x: 33, y: 275), size: 35, weight: .bold, ink: 0xFFFFFF)
-    label("Drag the app to Applications", at: CGPoint(x: 34, y: 252), size: 14, weight: .medium, ink: 0xCDDEF4)
+    fill(context, rounded(33, 334, 24, 3, 1.5), color(0x8ED9FF))
+    label("Notch Island", at: CGPoint(x: 33, y: 294), size: 30, weight: .bold, ink: 0xFFFFFF)
+    if let version {
+        label("v\(version)", at: CGPoint(x: 226, y: 302), size: 13, weight: .semibold, ink: 0x8ED9FF)
+    }
+    label("To install, drag Notch Island onto the Applications folder.", at: CGPoint(x: 34, y: 271), size: 14, weight: .medium, ink: 0xE3EDFA)
+    label("安裝：將 Notch Island 拖到右側的 Applications（應用程式）資料夾。", at: CGPoint(x: 34, y: 250), size: 13, weight: .regular, ink: 0xC2D4EE)
+
+    // Footer under the icon labels: where to look if macOS blocks the first launch.
+    label("Then open it from Applications. If macOS blocks the first launch, see “Install” in the README.",
+          at: CGPoint(x: 34, y: 30), size: 11, weight: .regular, ink: 0x4A5D7C)
+    label("之後從「應用程式」開啟；若 macOS 阻擋首次開啟，請參閱 README 的「安裝」說明。",
+          at: CGPoint(x: 34, y: 13), size: 11, weight: .regular, ink: 0x4A5D7C)
 
     let arrow = CGMutablePath()
     arrow.move(to: CGPoint(x: 262, y: 137))
@@ -105,9 +115,10 @@ func render(width: Int, height: Int, scale: Int, to output: URL, draw: (CGContex
 }
 
 let args = CommandLine.arguments
-guard args.count == 3 else {
-    fatalError("Usage: swift scripts/render_artwork.swift icon|installer output-directory")
+guard args.count == 3 || (args.count == 4 && args[1] == "installer") else {
+    fatalError("Usage: swift scripts/render_artwork.swift icon|installer output-directory [version]")
 }
+let installerVersion = args.count == 4 ? args[3] : nil
 let output = URL(fileURLWithPath: args[2], isDirectory: true)
 try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
 switch args[1] {
@@ -127,7 +138,9 @@ case "installer":
     for scale in [1, 2] {
         let suffix = scale == 2 ? "@2x" : ""
         let filename = "installer\(suffix).png"
-        try render(width: 620, height: 360, scale: scale, to: output.appendingPathComponent(filename), draw: drawInstaller)
+        try render(width: 620, height: 360, scale: scale, to: output.appendingPathComponent(filename)) { context in
+            drawInstaller(context, version: installerVersion)
+        }
     }
 default:
     fatalError("Choose icon or installer")

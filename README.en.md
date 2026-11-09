@@ -24,6 +24,14 @@ This project is inspired by the iPhone Dynamic Island. It does not receive iPhon
 - A notched MacBook is the intended device. Layout is derived from the display's reported safe areas; other models have not all been tested on physical hardware.
 - Xcode or Apple Command Line Tools to build the project. Some features require newer macOS versions or additional permissions.
 
+## Install v0.1.0
+
+1. Download `NotchIsland-0.1.0.dmg` from the repository's Releases page and check its SHA-256 against the published checksum.
+2. Open the DMG and drag **Notch Island** onto the **Applications** folder, following the arrow. Eject the DMG and open the app from Applications.
+3. This build is ad-hoc signed and **not notarized by Apple**. macOS may block the first launch. If you trust the source, follow [Apple's instructions](https://support.apple.com/en-us/102445) to open this app individually in Privacy & Security; do not disable Gatekeeper system-wide.
+
+The app appears in the menu bar. Privacy permissions may need to be granted again after rebuilding or updating an ad-hoc signed app. Existing Keychain access after an update has not been verified. See the [release notes](docs/RELEASE-NOTES-v0.1.0.md) for the checksum and limitations.
+
 ## Build and run
 
 ```bash

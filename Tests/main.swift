@@ -2243,6 +2243,15 @@ await test("packaging & publishing: purpose strings, .gitignore, secret scan nev
     let plist = try String(contentsOfFile: "Resources/Info.plist", encoding: .utf8)
     expect(plist.contains("NSMicrophoneUsageDescription") && plist.contains("NSAppleEventsUsageDescription"), "microphone and media automation purpose strings")
     expect(plist.contains("CFBundleIconFile") && FileManager.default.fileExists(atPath: "Resources/NotchIsland.icns"), "custom app icon")
+    // First public release is v0.1.0. The marketing version restarted from the
+    // private 0.3.x builds, so the build number must keep increasing (0.3.2 was 5)
+    // and nothing may key migrations on the marketing version.
+    let info = try PropertyListSerialization.propertyList(from: Data(contentsOf: URL(fileURLWithPath: "Resources/Info.plist")), format: nil) as? [String: Any]
+    expect(info?["CFBundleShortVersionString"] as? String == "0.1.0", "release version matches the v0.1.0 tag")
+    expect(Int(info?["CFBundleVersion"] as? String ?? "") ?? 0 > 5, "build number stays above the private 0.3.2 (5) build")
+    expect(info?["CFBundleIdentifier"] as? String == "local.notchisland.app", "bundle ID unchanged, so existing settings and Keychain items are kept")
+    let providers = try String(contentsOfFile: "Sources/NotchIsland/Providers.swift", encoding: .utf8)
+    expect(providers.contains("\"NotchIsland/0.1 (macOS)\""), "User-Agent uses the release series")
     for l in ["en", "zh-Hant", "zh-Hans"] {
         let strings = try String(contentsOfFile: "Resources/\(l).lproj/InfoPlist.strings", encoding: .utf8)
         expect(strings.contains("NSMicrophoneUsageDescription"), "\(l) mic string")

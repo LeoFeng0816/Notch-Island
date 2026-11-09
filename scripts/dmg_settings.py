@@ -3,6 +3,9 @@ format = "UDZO"
 files = [defines["app"]]
 symlinks = {"Applications": "/Applications"}
 background = defines["background"]
+# Volume icon: the same simplified Notch Island logo as the app.
+if "icon" in defines:
+    icon = defines["icon"]
 default_view = "icon-view"
 window_rect = ((120, 110), (620, 360))
 show_toolbar = False
