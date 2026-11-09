@@ -4,6 +4,16 @@
 
 ![Notch Island icon](docs/notch-island-icon.png)
 
+![Notch Island application window](docs/images/notch-island-actual-2026-11-08.png)
+
+*Actual app window captured from a development build on 2026-11-08; the v0.1.0 interface and displayed data may differ.*
+
+### Permissions and privacy
+
+Notch Island requests system permissions for features chosen by the user. The current app has no feature that uploads private data to a Notch Island-owned or private server. Clipboard history is stored locally, and calendar data is not transmitted by the app.
+
+**Some optional features use third-party services:** weather sends a city query or coordinates to Open-Meteo; stocks send ticker queries to Yahoo Finance or Alpha Vantage; and AudD uploads a short audio clip only after the user consents and starts recognition. ShazamKit sends audio signatures to Apple for matching, and album artwork may be loaded from its provider. Enable and authorize features as needed; see the privacy and permissions section below.
+
 Notch Island is a macOS notch-area utility built with Swift, AppKit, and SwiftUI. It shows music playback and timer activity, and provides widgets for weather, battery, stocks, clocks, and calendar, along with quick actions. It supports English, Traditional Chinese, and Simplified Chinese. It is not a complete port of iPhone Live Activities. Some integrations require system permissions and still need further real-device testing. The app is not notarized by Apple.
 
 This project is inspired by the iPhone Dynamic Island. It does not receive iPhone Live Activities or arbitrary third-party notifications: the activities shown are the ones supported by the app itself.

@@ -8,6 +8,16 @@ Notch Island 是以 Swift、AppKit 與 SwiftUI 製作的 macOS 瀏海區域工�
 
 ![Notch Island 圖示](docs/notch-island-icon.png)
 
+![Notch Island 實際應用程式視窗](docs/images/notch-island-actual-2026-11-08.png)
+
+*實際應用程式視窗截圖，拍攝於 2026-11-08 的開發版本；v0.1.0 的介面與資料可能不同。*
+
+### 權限與隱私
+
+Notch Island 申請的系統權限用於使用者選擇的功能；目前程式沒有將私人資料上傳至 Notch Island 自有或私人伺服器的功能。剪貼簿歷史保存在本機；行事曆資料不會由本 App 傳出。
+
+**部分選用功能需要第三方網路服務：**天氣會向 Open-Meteo 傳送查詢城市或座標；股價會向 Yahoo Finance 或 Alpha Vantage 傳送查詢代號；選用 AudD 辨識時，只有在同意並主動開始辨識後才會將短音訊傳給 AudD。ShazamKit 會將音訊特徵傳送給 Apple 進行比對；音樂封面也可能從其提供者載入。請依需要選擇並授權這些功能，詳見下方「隱私」與「權限」。
+
 > **v0.1.0 是第一個公開版本。** 安裝檔使用 ad-hoc 簽章，**沒有 Developer ID 簽章，也沒有經過 Apple 公證**，第一次開啟會被 macOS 阻擋，請依下方「[安裝](#安裝)」的 Apple 官方步驟個別允許。不建議停用 Gatekeeper。尚未實機驗證的功能列在「[已知限制](#已知限制)」。發行說明見 [docs/RELEASE-NOTES-v0.1.0.md](docs/RELEASE-NOTES-v0.1.0.md)。
 
 > **已知限制：Shazam 歌曲辨識目前暫時無法使用。** 系統控制中心及其他備援辨識流程仍待實機驗證，請勿依賴這些功能。

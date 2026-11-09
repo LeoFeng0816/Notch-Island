@@ -6,6 +6,8 @@
 
 **已知限制：Shazam 歌曲辨識目前暫時無法使用。** 系統控制中心及其他備援辨識流程仍待實機驗證，請勿依賴這些功能。
 
+**權限與隱私：**系統權限用於使用者選擇的功能；目前程式不會將私人資料上傳至 Notch Island 自有伺服器。部分選用功能會連線第三方：天氣與股價查詢會傳送位置或代號，AudD 只有在明確同意並開始辨識後才上傳短音訊，ShazamKit 則向 Apple 傳送音訊特徵。詳見 README 的隱私說明。
+
 首個公開版本，提供瀏海區域的音樂與計時活動、可自訂小工具、剪貼簿歷史、截圖與錄影入口，以及三種介面語言。
 
 **安裝：**下載 `NotchIsland-0.1.0.dmg`，開啟後依箭頭將 Notch Island 拖至 Applications，再從「應用程式」開啟。此版本僅以 ad-hoc 簽章，**未經 Apple 公證**；若你信任來源，macOS 阻擋時請依 [Apple 的說明](https://support.apple.com/zh-tw/102445)在「隱私權與安全性」個別允許此 App。
@@ -17,6 +19,8 @@
 ## English
 
 **Known issue: Shazam song recognition is temporarily unavailable.** The system Control Center and alternative recognition flows still require real-device testing and should not be relied on.
+
+**Permissions and privacy:** Permissions support user-selected features; the current app does not upload private data to a Notch Island-owned server. Some optional features use third-party services: weather and stock queries send a location or ticker, AudD uploads a short audio clip only after explicit consent and initiation, and ShazamKit sends audio signatures to Apple. See the README for details.
 
 The first public version includes music and timer activities around the notch, configurable widgets, clipboard history, screenshot and screen-recording entry points, and three interface languages.
 
