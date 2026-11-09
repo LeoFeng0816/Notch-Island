@@ -1,0 +1,7 @@
+"CFBundleDisplayName" = "瀏海島";
+"NSAppleEventsUsageDescription" = "瀏海島會讀取支援的音樂 App 和 YouTube 分頁的播放狀態並傳送播放指令；只有在你選擇時，才會請 QuickTime Player 開啟螢幕錄影工具列。";
+"NSLocationUsageDescription" = "在你要求時，瀏海島會使用概略位置顯示當地天氣。";
+"NSLocationWhenInUseUsageDescription" = "在你要求時，瀏海島會使用概略位置顯示當地天氣。";
+"NSCalendarsFullAccessUsageDescription" = "瀏海島會讀取行事曆活動，以便在小工具中顯示即將到來的行程。";
+"NSAudioCaptureUsageDescription" = "瀏海島會在你開啟真實音量時使用這台 Mac 的聲音；在你選擇以 Mac 聲音進行 Shazam 辨識時使用（ShazamKit 會將音訊特徵傳給 Apple）；或只有在你選擇 AudD 時，錄下最多 10 秒並上傳到第三方服務 AudD。";
+"NSMicrophoneUsageDescription" = "瀏海島只在你選擇時使用麥克風：Shazam 最多 30 秒（不儲存音訊），或只有在你選擇 AudD 時，錄下最多 10 秒並上傳到第三方服務 AudD。";

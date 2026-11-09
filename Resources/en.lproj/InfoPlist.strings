@@ -1,0 +1,7 @@
+"CFBundleDisplayName" = "Notch Island";
+"NSAppleEventsUsageDescription" = "Notch Island reads playback from supported music apps and YouTube tabs, sends playback commands, and—only when you choose it—asks QuickTime Player to open its screen-recording toolbar.";
+"NSLocationUsageDescription" = "Notch Island uses an approximate location to show local weather when requested.";
+"NSLocationWhenInUseUsageDescription" = "Notch Island uses an approximate location to show local weather when requested.";
+"NSCalendarsFullAccessUsageDescription" = "Notch Island reads your calendar events to show upcoming events in the calendar widget.";
+"NSAudioCaptureUsageDescription" = "Notch Island uses this Mac’s audio for live levels when enabled, to identify music when you select Mac audio in Shazam (ShazamKit sends audio signatures to Apple), or—only if you choose AudD—to record up to 10 seconds that is uploaded to AudD, a third-party service.";
+"NSMicrophoneUsageDescription" = "Notch Island uses the microphone only when you choose it: up to 30 seconds for Shazam (audio is not stored), or—only if you choose AudD—up to 10 seconds that is uploaded to AudD, a third-party service.";
