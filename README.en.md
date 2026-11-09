@@ -4,7 +4,7 @@
 
 ![Notch Island icon](docs/notch-island-icon.png)
 
-Notch Island is a macOS menu bar app built with Swift, AppKit, and SwiftUI. It turns the area around a MacBook's camera notch into an interactive island for music, timers, and widgets. The interface is available in English, Traditional Chinese, and Simplified Chinese.
+Notch Island is a macOS notch-area utility built with Swift, AppKit, and SwiftUI. It shows music playback and timer activity, and provides widgets for weather, battery, stocks, clocks, and calendar, along with quick actions. It supports English, Traditional Chinese, and Simplified Chinese. It is not a complete port of iPhone Live Activities. Some integrations require system permissions and still need further real-device testing. The app is not notarized by Apple.
 
 This project is inspired by the iPhone Dynamic Island. It does not receive iPhone Live Activities or arbitrary third-party notifications: the activities shown are the ones supported by the app itself.
 
