@@ -29,42 +29,33 @@ func gradient(_ context: CGContext, _ path: CGPath, _ colors: [CGColor], from: C
 }
 
 func drawIcon(_ context: CGContext) {
-    context.saveGState()
-    context.setShadow(offset: CGSize(width: 0, height: -12), blur: 28, color: color(0x193858, alpha: 0.30))
-    fill(context, rounded(96, 96, 832, 832, 193), color(0xACC7E5))
-    context.restoreGState()
-    gradient(context, rounded(96, 96, 832, 832, 193), [color(0xF6FAFF), color(0xAED0FF), color(0x769FE1)],
-             from: CGPoint(x: 226, y: 917), to: CGPoint(x: 796, y: 103))
-    fill(context, rounded(143, 155, 738, 36, 18), color(0x40628D, alpha: 0.20))
+    // A quiet gradient tile and one silhouette keep the notch recognizable at small sizes.
+    gradient(context, rounded(96, 96, 832, 832, 193), [color(0xB4EDFA), color(0x9B9EF5)],
+             from: CGPoint(x: 136, y: 928), to: CGPoint(x: 894, y: 96))
 
-    // The high-contrast laptop silhouette stays legible at 16 pt.
-    fill(context, rounded(199, 290, 626, 448, 47), color(0x111B2B))
-    gradient(context, rounded(220, 312, 584, 404, 29), [color(0x91D7F5), color(0x6AA5F4), color(0x274B9C)],
-             from: CGPoint(x: 298, y: 725), to: CGPoint(x: 721, y: 323))
-
-    // Hardware cutout meets the top bezel. The island expands just below it.
-    let notch = CGMutablePath()
-    notch.move(to: CGPoint(x: 395, y: 722))
-    notch.addQuadCurve(to: CGPoint(x: 413, y: 698), control: CGPoint(x: 413, y: 722))
-    notch.addQuadCurve(to: CGPoint(x: 435, y: 676), control: CGPoint(x: 413, y: 676))
-    notch.addLine(to: CGPoint(x: 589, y: 676))
-    notch.addQuadCurve(to: CGPoint(x: 611, y: 698), control: CGPoint(x: 611, y: 676))
-    notch.addQuadCurve(to: CGPoint(x: 629, y: 722), control: CGPoint(x: 611, y: 722))
-    notch.closeSubpath()
-    fill(context, notch, color(0x111B2B))
-    fill(context, rounded(505, 692, 14, 14, 7), color(0x587A9B))
-
-    gradient(context, rounded(323, 574, 378, 90, 42), [color(0x263651), color(0x101927)],
-             from: CGPoint(x: 511, y: 664), to: CGPoint(x: 511, y: 574))
-    fill(context, rounded(350, 596, 52, 46, 13), color(0x83C8FC))
-    fill(context, rounded(420, 625, 91, 10, 5), color(0xEFF7FF))
-    fill(context, rounded(420, 604, 63, 8, 4), color(0x9CB3D4))
-    for (index, height) in [18.0, 33.0, 24.0, 13.0].enumerated() {
-        fill(context, rounded(596 + CGFloat(index) * 18, 619 - height / 2, 9, height, 4.5), color(0x8AD9FD))
-    }
-
-    fill(context, rounded(159, 265, 706, 36, 18), color(0x19283C))
-    fill(context, rounded(450, 280, 124, 13, 6.5), color(0xB1CAE6))
+    let bezel = CGMutablePath()
+    bezel.move(to: CGPoint(x: 270, y: 678))
+    bezel.addLine(to: CGPoint(x: 754, y: 678))
+    bezel.addCurve(to: CGPoint(x: 816, y: 616), control1: CGPoint(x: 791, y: 678), control2: CGPoint(x: 816, y: 653))
+    bezel.addLine(to: CGPoint(x: 816, y: 292))
+    bezel.addLine(to: CGPoint(x: 781, y: 292))
+    bezel.addLine(to: CGPoint(x: 781, y: 609))
+    bezel.addCurve(to: CGPoint(x: 750, y: 640), control1: CGPoint(x: 781, y: 628), control2: CGPoint(x: 769, y: 640))
+    bezel.addLine(to: CGPoint(x: 622, y: 640))
+    bezel.addCurve(to: CGPoint(x: 606, y: 624), control1: CGPoint(x: 612, y: 640), control2: CGPoint(x: 606, y: 634))
+    bezel.addCurve(to: CGPoint(x: 568, y: 587), control1: CGPoint(x: 606, y: 603), control2: CGPoint(x: 589, y: 587))
+    bezel.addLine(to: CGPoint(x: 456, y: 587))
+    bezel.addCurve(to: CGPoint(x: 418, y: 624), control1: CGPoint(x: 435, y: 587), control2: CGPoint(x: 418, y: 603))
+    bezel.addCurve(to: CGPoint(x: 402, y: 640), control1: CGPoint(x: 418, y: 634), control2: CGPoint(x: 412, y: 640))
+    bezel.addLine(to: CGPoint(x: 274, y: 640))
+    bezel.addCurve(to: CGPoint(x: 243, y: 609), control1: CGPoint(x: 255, y: 640), control2: CGPoint(x: 243, y: 628))
+    bezel.addLine(to: CGPoint(x: 243, y: 292))
+    bezel.addLine(to: CGPoint(x: 208, y: 292))
+    bezel.addLine(to: CGPoint(x: 208, y: 616))
+    bezel.addCurve(to: CGPoint(x: 270, y: 678), control1: CGPoint(x: 208, y: 653), control2: CGPoint(x: 233, y: 678))
+    bezel.closeSubpath()
+    gradient(context, bezel, [color(0x071231), color(0x071231), color(0x071231, alpha: 0)],
+             from: CGPoint(x: 512, y: 678), to: CGPoint(x: 512, y: 292))
 }
 
 func label(_ string: String, at origin: CGPoint, size: CGFloat, weight: NSFont.Weight, ink: UInt32) {

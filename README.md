@@ -1,5 +1,7 @@
 # Notch Island（瀏海島）
 
+[English](README.en.md) · 繁體中文
+
 一個以 Swift（AppKit + SwiftUI）撰寫的 macOS 選單列小工具，把 MacBook 的螢幕瀏海變成類似「動態島」的互動區域。
 這是一個實用的範圍內實作，**並非** iPhone 動態島的完整功能複製：macOS 沒有公開 API 讓第三方 App 讀取 iPhone 或其他 App 的 Live Activities，所以這裡的「即時活動」只有本 App 自己的倒數計時、碼表，以及「音樂」／Spotify 播放狀態；沒有通知攔截或第三方 App 整合。
 
