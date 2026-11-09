@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>Notch Island</string>
+	<key>CFBundleExecutable</key>
+	<string>NotchIsland</string>
+	<key>CFBundleIconFile</key>
+	<string>NotchIsland.icns</string>
+	<key>CFBundleIdentifier</key>
+	<string>local.notchisland.app</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>en</string>
+		<string>zh-Hant</string>
+		<string>zh-Hans</string>
+	</array>
+	<key>CFBundleName</key>
+	<string>NotchIsland</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.3.2</string>
+	<key>CFBundleVersion</key>
+	<string>5</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Notch Island reads playback from supported music apps and YouTube tabs, sends playback commands, and—only when you choose it—asks QuickTime Player to open its screen-recording toolbar.</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Notch Island uses this Mac’s audio for live levels when enabled, to identify music when you select Mac audio in Shazam (ShazamKit sends audio signatures to Apple), or—only if you choose AudD—to record up to 10 seconds that is uploaded to AudD, a third-party service.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Notch Island reads your calendar events to show upcoming events in the calendar widget.</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSLocationUsageDescription</key>
+	<string>Notch Island uses an approximate location to show local weather when requested.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Notch Island uses an approximate location to show local weather when requested.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Notch Island uses the microphone only when you choose it: up to 30 seconds for Shazam (audio is not stored), or—only if you choose AudD—up to 10 seconds that is uploaded to AudD, a third-party service.</string>
+</dict>
+</plist>

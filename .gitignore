@@ -1,0 +1,27 @@
+# Build output and release images (rebuild with ./build.sh / scripts/make_dmg.sh)
+build/
+dist/
+*.dmg
+.notchisland-build.*
+
+# macOS Finder metadata
+.DS_Store
+
+# Personal material — screenshots / recordings of this Mac, handoff notes with
+# personal workflow details. Kept locally, never published.
+screenshots/
+*.mov
+*.mp4
+NotchIsland-實際畫面.jpg
+CLAUDE.md
+
+# Local secrets must never be committed (API keys live in the macOS Keychain).
+*.p12
+*.p8
+*.pfx
+*.pem
+*.key
+*.cer
+*.mobileprovision
+.env
+.env.*
