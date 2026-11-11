@@ -19,6 +19,7 @@ enum SelfTest {
             check(bundle.path(forResource: "InfoPlist", ofType: "strings", inDirectory: nil, forLocalization: lproj) != nil, "\(lproj).lproj")
         }
         check(LanguageSettings.missingKeys.isEmpty, "localization keys")
+        check(AppVersion.current != nil, "version is X.Y.Z (software update compares it)")
         check(LevelAnalyzer(sampleRate: 48_000) != nil, "audio analyser")
         check(ClipboardPolicy.shouldIgnore(types: ["org.nspasteboard.ConcealedType"], frontmostBundleID: nil), "clipboard policy")
         check(FileManager.default.isExecutableFile(atPath: CaptureTool.tool.path), "screencapture tool")

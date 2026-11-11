@@ -3,5 +3,5 @@
 "NSLocationUsageDescription" = "在你要求时，刘海岛会使用大致位置显示当地天气。";
 "NSLocationWhenInUseUsageDescription" = "在你要求时，刘海岛会使用大致位置显示当地天气。";
 "NSCalendarsFullAccessUsageDescription" = "刘海岛会读取日历活动，以便在小组件中显示即将到来的日程。";
-"NSAudioCaptureUsageDescription" = "刘海岛会在你开启真实音量时使用这台 Mac 的声音；在你选择用 Mac 声音进行 Shazam 识别时使用（ShazamKit 会将音频特征发送给 Apple）；或只有在你选择 AudD 时，录下最多 10 秒并上传到第三方服务 AudD。";
-"NSMicrophoneUsageDescription" = "刘海岛只在你选择时使用麦克风：Shazam 最多 30 秒（不存储音频），或只有在你选择 AudD 时，录下最多 10 秒并上传到第三方服务 AudD。";
+"NSAudioCaptureUsageDescription" = "刘海岛会在你开启真实音量时使用这台 Mac 的声音；并在你点按“音乐识别”后用于识别音乐：默认在你同意后，把约 12 秒上传到第三方服务 Song Finder（songfinder.dev）；Shazam 会将音频特征发送给 Apple；只有在你选择 AudD 时，才会把最多 10 秒发送给 AudD。";
+"NSMicrophoneUsageDescription" = "刘海岛只在你点按“音乐识别”后使用麦克风：默认在你同意后，把约 12 秒上传到第三方服务 Song Finder（songfinder.dev）；Shazam 最多 30 秒（不存储）；或只有在你选择 AudD 时，把最多 10 秒上传到 AudD。";

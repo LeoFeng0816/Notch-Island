@@ -7,6 +7,7 @@ import JavaScriptCore
 import CoreLocation
 import EventKit
 import CoreAudio
+import CryptoKit
 
 // Minimal test runner compiled together with the app sources (see run_tests.sh).
 // Pass --live to also hit the real Open-Meteo / Alpha Vantage (demo key) endpoints.
@@ -67,11 +68,12 @@ let quoteJSON = Data("""
 """.utf8)
 let taipei = Place(name: "Taipei", admin: nil, country: "Taiwan", latitude: 25.05, longitude: 121.53, timezone: "Asia/Taipei")
 
-await test("music recognition: system default and explicit third-party choice") {
-    expect(MusicRecognitionMode.resolve("system") == .system, "system option invokes the system path")
-    expect(MusicRecognitionMode.resolve("audd") == .audd, "third-party option opens AudD")
-    expect(MusicRecognitionMode.resolve("") == .system, "missing preference defaults to system")
-    expect(MusicRecognitionMode.resolve("unknown") == .system, "unknown preference cannot silently choose third-party")
+await test("music recognition: Song Finder default, explicit macOS / AudD choices kept") {
+    expect(MusicRecognitionMode.resolve("system") == .system, "stored macOS choice is kept")
+    expect(MusicRecognitionMode.resolve("audd") == .audd, "stored AudD choice is kept")
+    expect(MusicRecognitionMode.resolve("songFinder") == .songFinder, "Song Finder option")
+    expect(MusicRecognitionMode.resolve("") == .songFinder, "missing preference defaults to Song Finder")
+    expect(MusicRecognitionMode.resolve("unknown") == .songFinder, "unknown preference falls back to Song Finder, never AudD")
     let lang = LanguageSettings.shared
     let saved = lang.language
     defer { lang.language = saved }
@@ -97,6 +99,9 @@ await test("music recognition: quick action feedback, guidance never jumps to Au
     expect(!bar.contains("scaleEffect") && !bar.contains("offset("), "the button flash has no movement")
     expect(bar.contains("model.startSystemRecognition") && bar.contains("model.subpage = .audd"),
            "system mode tries macOS directly; AudD mode only opens its page")
+    expect(bar.contains("model.subpage = .songFinder") && bar.contains("songFinder.start()"),
+           "Song Finder mode opens its page and starts from the press (consent is checked inside start)")
+    expect(bar.contains("private var recognitionMode = MusicRecognitionMode.songFinder.rawValue"), "quick action default is Song Finder")
     expect(!bar.contains("recognition.start") && !bar.contains("audd?.start"), "the quick action never starts an AudD capture")
     let guidance = page.components(separatedBy: "private var systemRecognition: some View")[1].components(separatedBy: "private var systemRecognitionStatus")[0]
     expect(!guidance.contains("showingAudD") && !guidance.contains("audDTitle"), "macOS guidance offers no AudD shortcut")
@@ -2707,8 +2712,8 @@ await test("packaging & publishing: purpose strings, .gitignore, secret scan nev
     // private 0.3.x builds, so the build number must keep increasing (0.3.2 was 5)
     // and nothing may key migrations on the marketing version.
     let info = try PropertyListSerialization.propertyList(from: Data(contentsOf: URL(fileURLWithPath: "Resources/Info.plist")), format: nil) as? [String: Any]
-    expect(info?["CFBundleShortVersionString"] as? String == "0.1.1", "release version is v0.1.1")
-    expect(Int(info?["CFBundleVersion"] as? String ?? "") ?? 0 > 6, "build number stays above v0.1.0 (6) and the private 0.3.2 (5) build")
+    expect(info?["CFBundleShortVersionString"] as? String == "0.1.2", "review version is 0.1.2 (newer than the published v0.1.1)")
+    expect(Int(info?["CFBundleVersion"] as? String ?? "") ?? 0 > 7, "build number stays above v0.1.1 (7), v0.1.0 (6) and the private 0.3.2 (5) build")
     expect(info?["CFBundleIdentifier"] as? String == "local.notchisland.app", "bundle ID unchanged, so existing settings and Keychain items are kept")
     let providers = try String(contentsOfFile: "Sources/NotchIsland/Providers.swift", encoding: .utf8)
     expect(providers.contains("\"NotchIsland/0.1 (macOS)\""), "User-Agent uses the release series")
@@ -2716,6 +2721,7 @@ await test("packaging & publishing: purpose strings, .gitignore, secret scan nev
         let strings = try String(contentsOfFile: "Resources/\(l).lproj/InfoPlist.strings", encoding: .utf8)
         expect(strings.contains("NSMicrophoneUsageDescription"), "\(l) mic string")
         expect(strings.components(separatedBy: "AudD").count >= 3, "\(l) mic and system-audio purposes disclose the optional AudD upload")
+        expect(strings.components(separatedBy: "songfinder.dev").count >= 3, "\(l) mic and system-audio purposes name Song Finder's host")
         expect(strings.contains("QuickTime"), "\(l) Apple Events purpose names QuickTime recording")
     }
     let ignore = try String(contentsOfFile: ".gitignore", encoding: .utf8)
@@ -2939,6 +2945,640 @@ await test("Yahoo: realistic intraday + daily series, nulls, symbol encoding, pr
     center.configurationChanged()
     await center.waitForIdle()
     expect(center.stocks == .empty && http.urls.filter { $0.host == "www.alphavantage.co" }.isEmpty, "AV without key: cleared, no request")
+}
+
+// MARK: - 0.1.2: Song Finder (default music recognition)
+
+/// Scripted HTTP for Song Finder: records requests; can answer, fail, or hold the answer.
+final class MockSongFinder: URLProtocol {
+    static let lock = NSLock()
+    static var requests: [URLRequest] = []
+    static var bodies: [Data] = []
+    static var reply: (status: Int, body: Data)? = (200, Data())
+    static var failure: URLError.Code?
+    static var delay: TimeInterval = 0
+    private let stopped = NSLock()
+    private var isStopped = false
+    static func reset(_ status: Int = 200, _ json: String = "{}") {
+        lock.withLock { requests = []; bodies = []; reply = (status, Data(json.utf8)); failure = nil; delay = 0 }
+    }
+    static var count: Int { lock.withLock { requests.count } }
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        var body = request.httpBody ?? Data()
+        if body.isEmpty, let stream = request.httpBodyStream {
+            stream.open(); defer { stream.close() }
+            var buffer = [UInt8](repeating: 0, count: 65_536)
+            while stream.hasBytesAvailable { let n = stream.read(&buffer, maxLength: buffer.count); if n <= 0 { break }; body.append(buffer, count: n) }
+        }
+        let (reply, failure, delay) = Self.lock.withLock { () -> ((Int, Data)?, URLError.Code?, TimeInterval) in
+            Self.requests.append(request); Self.bodies.append(body); return (Self.reply, Self.failure, Self.delay)
+        }
+        let deliver = { [weak self] in
+            guard let self, !self.stopped.withLock({ self.isStopped }) else { return }
+            if let failure { self.client?.urlProtocol(self, didFailWithError: URLError(failure)); return }
+            guard let (status, data) = reply else { self.client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet)); return }
+            self.client?.urlProtocol(self, didReceive: HTTPURLResponse(url: self.request.url!, statusCode: status, httpVersion: nil,
+                                                                       headerFields: ["Content-Type": "application/json"])!,
+                                     cacheStoragePolicy: .notAllowed)
+            self.client?.urlProtocol(self, didLoad: data)
+            self.client?.urlProtocolDidFinishLoading(self)
+        }
+        if delay > 0 { DispatchQueue.global().asyncAfter(deadline: .now() + delay, execute: deliver) } else { deliver() }
+    }
+    override func stopLoading() { stopped.withLock { isStopped = true } }
+}
+
+/// Synthetic microphone + Mac audio (sine tones), per-source success and level.
+@MainActor final class DualAudio: AudDAudioSource {
+    var systemOK = true, micOK = true
+    var systemAmplitude: Float = 0.3, micAmplitude: Float = 0.2
+    var systemRate = 48_000.0, micRate = 44_100.0, seconds = 12.5
+    var begun: [ShazamRecognizer.Source] = []
+    var ended = 0
+    var clips: [AudDClip] = []
+    func begin(_ source: ShazamRecognizer.Source, into clip: AudDClip) -> Bool {
+        begun.append(source); clips.append(clip)
+        let ok = source == .systemAudio ? systemOK : micOK
+        guard ok else { return false }
+        let rate = source == .systemAudio ? systemRate : micRate
+        let amplitude = source == .systemAudio ? systemAmplitude : micAmplitude
+        let frequency: Float = source == .systemAudio ? 440 : 660
+        clip.append((0..<Int(seconds * rate)).map { amplitude * sin(2 * .pi * frequency * Float($0) / Float(rate)) }, rate: rate)
+        return true
+    }
+    func end() { ended += 1 }
+}
+
+@MainActor func settle(_ r: SongFinderRecognition, timeout: Double = 5) async {
+    let deadline = Date().addingTimeInterval(timeout)
+    while (r.phase.busy || r.phase == .idle) && Date() < deadline { try? await Task.sleep(for: .milliseconds(10)) }
+}
+
+let sfMatchJSON = #"{"code":0,"message":"ok","data":{"matched":true,"title":"Blinding Lights","artist":"The Weeknd","album":"After Hours","releaseDate":"2019-11-29","label":"Republic Records","score":100,"spotifyUrl":"https://open.spotify.com/track/x","appleMusicUrl":null,"engine":"acrcloud"}}"#
+
+await test("Song Finder protocol: documented request, envelope decoding, no-match only for matched:false") {
+    let wav = PCMWave.encode([Float](repeating: 0.25, count: 16_000 * 4), rate: 16_000)
+    let request = SongFinderService.makeRequest(wav: wav, boundary: "B")
+    let body = String(decoding: request.httpBody ?? Data(), as: UTF8.self)
+    expect(request.url?.absoluteString == "https://songfinder.dev/api/music/recognize" && request.httpMethod == "POST",
+           "POST to the endpoint used by Song Finder's own clients")
+    expect(request.value(forHTTPHeaderField: "Content-Type") == "multipart/form-data; boundary=B", "multipart form")
+    expect(request.value(forHTTPHeaderField: "X-SongFinder-Client") == "cli", "documented non-browser client header")
+    expect(request.value(forHTTPHeaderField: "Accept") == "application/json", "asks for JSON")
+    expect((request.value(forHTTPHeaderField: "User-Agent") ?? "").hasPrefix("NotchIsland/"), "honest User-Agent")
+    expect(body.contains("name=\"file\"; filename=\"clip.wav\"\r\nContent-Type: audio/wav") && body.contains("name=\"source\"\r\n\r\ncli\r\n"),
+           "file + source fields")
+    expect(body.hasSuffix("--B--\r\n") && request.url?.query == nil, "closed multipart, nothing in the URL")
+    expect(!body.lowercased().contains("api_token") && !body.lowercased().contains("key"), "no API key of any kind")
+    expect(request.timeoutInterval == 120, "waits 120 s like the official clients (server budgets 100 s)")
+
+    func p(_ json: String, _ status: Int = 200) -> SongFinderService.Outcome { SongFinderService.parse(data: Data(json.utf8), httpStatus: status) }
+    expect(p(sfMatchJSON) == .matched(.init(title: "Blinding Lights", artist: "The Weeknd", album: "After Hours")), "full match")
+    expect(p(#"{"code":0,"message":"ok","data":{"matched":true,"title":"  T  ","artist":"A"}}"#) == .matched(.init(title: "T", artist: "A", album: nil)),
+           "engine without optional fields, trimmed")
+    expect(p(#"{"code":0,"message":"ok","data":{"matched":true,"title":"T","artist":"A","album":""}}"#) == .matched(.init(title: "T", artist: "A", album: nil)),
+           "empty album hidden")
+    expect(p(#"{"code":0,"message":"ok","data":{"matched":false}}"#) == .noMatch, "matched:false → no match")
+    expect(p(#"{"code":0,"message":"ok","data":{"matched":true,"title":"","artist":"A"}}"#) == .badResponse(200), "a match without a title is not shown")
+    expect(p(#"{"code":0,"message":"ok","data":null}"#) == .badResponse(200), "missing data")
+    expect(p(#"{"code":0,"message":"ok","data":{"matched":false}}"#, 404) == .badResponse(404), "code 0 on a non-2xx status is not trusted")
+    expect(p(#"{"code":1001,"message":"Recognition failed\n\u0007"}"#) == .serviceError("Recognition failed", 200), "non-zero code on HTTP 200 is an error")
+    expect(p(#"{"code":1}"#, 400) == .serviceError(nil, 400), "error without a message")
+    expect(p(#"{"code":429,"message":"Too many"}"#, 429) == .rateLimited && p("<html>slow down</html>", 429) == .rateLimited, "429 → rate limited")
+    expect(p(#"{"code":403,"message":"Forbidden"}"#, 403) == .refused(403) && p("<html>", 403) == .refused(403) && p("", 401) == .refused(401), "refused client")
+    expect(p("<html>too big</html>", 413) == .tooLarge, "413")
+    expect(p("<html>Bad gateway</html>", 502) == .serverError(502) && p(#"{"code":500,"message":"boom"}"#, 500) == .serverError(500), "5xx")
+    expect(p("<html>ok?</html>", 200) == .badResponse(200) && p("", 200) == .badResponse(200), "not the envelope")
+    let errors = [p(#"{"code":1}"#), p("", 429), p("", 403), p("", 413), p("", 503), p("<x>"), p(#"{"code":0}"#)]
+    expect(!errors.contains(.noMatch), "no error is ever shown as 'not found'")
+    expect(SongFinderService.sanitized(String(repeating: "x", count: 400))?.count == 160, "server message capped")
+
+    expect(SongFinderService.transportFailure(URLError(.timedOut)) == .timeout, "timeout")
+    expect(SongFinderService.transportFailure(URLError(.notConnectedToInternet)) == .offline
+           && SongFinderService.transportFailure(URLError(.cannotFindHost)) == .offline, "offline")
+    expect(SongFinderService.transportFailure(URLError(.serverCertificateUntrusted)) == .secureConnection, "TLS")
+    expect(SongFinderService.transportFailure(URLError(.cancelled)) == nil, "user cancel isn't an error")
+    expect(SongFinderService.transportFailure(URLError(.badServerResponse)) == .network(URLError.Code.badServerResponse.rawValue), "other codes shown")
+
+    let song = SongFinderService.Song(title: "Back in Black", artist: "AC/DC & Friends", album: nil)
+    expect(SongFinderService.googleSearchURL(song).absoluteString == "https://www.google.com/search?q=AC%2FDC%20%26%20Friends%20Back%20in%20Black",
+           "Google query is artist + title, strictly encoded")
+    let zh = SongFinderService.googleSearchURL(.init(title: "晴天", artist: "周杰倫", album: nil))
+    let items = URLComponents(url: zh, resolvingAgainstBaseURL: false)?.queryItems
+    expect(zh.host == "www.google.com" && zh.scheme == "https" && zh.path == "/search" && items?.count == 1 && items?.first?.value == "周杰倫 晴天",
+           "non-ASCII titles round-trip")
+    let tricky = SongFinderService.googleSearchURL(.init(title: "x#y?z=1", artist: "a+b", album: nil))
+    expect(URLComponents(url: tricky, resolvingAgainstBaseURL: false)?.queryItems?.map(\.name) == ["q"] && tricky.fragment == nil,
+           "symbols can't add parameters or fragments")
+    expect(SongFinderService.copyText(.init(title: "Blinding Lights", artist: "The Weeknd", album: nil)) == "The Weeknd - Blinding Lights", "copy = artist + title")
+}
+
+await test("Song Finder audio: resampling, silence, mixing, size limit") {
+    func tone(_ seconds: Double, _ rate: Int, _ amplitude: Float = 0.3, _ frequency: Float = 440) -> [Float] {
+        (0..<Int(seconds * Double(rate))).map { amplitude * sin(2 * .pi * frequency * Float($0) / Float(rate)) }
+    }
+    let down = SongFinderAudio.resample(tone(1, 48_000), from: 48_000)
+    expect(abs(down.count - 16_000) <= 64, "48 kHz → 16 kHz length (\(down.count))")
+    expect(SongFinderAudio.rms(down) > 0.18 && SongFinderAudio.rms(down) < 0.25, "level kept after conversion")
+    expect(SongFinderAudio.resample([0.1, 0.2], from: 16_000) == [0.1, 0.2], "same rate untouched")
+    expect(SongFinderAudio.resample([], from: 48_000).isEmpty && SongFinderAudio.resample([0.1], from: 0).isEmpty, "empty / invalid input")
+    expect(!SongFinderAudio.hasSound([Float](repeating: 0, count: 16_000 * 5)), "exact silence (denied system-audio tap)")
+    expect(!SongFinderAudio.hasSound(tone(2, 16_000)), "under 3 s")
+    expect(!SongFinderAudio.hasSound(tone(5, 16_000, 0.0003)), "below the noise floor")
+    expect(SongFinderAudio.hasSound(tone(5, 16_000)), "a tone has sound")
+
+    let both = SongFinderAudio.prepare(system: (tone(12.5, 48_000), 48_000), microphone: (tone(12.5, 44_100, 0.2, 660), 44_100))
+    expect(both.systemHasSound && both.microphoneHasSound, "both sources had sound")
+    let maxBytes = 44 + SongFinderService.captureSeconds * 16_000 * 2
+    expect(both.wav.map { $0.count <= maxBytes && $0.count > 44 + 11 * 16_000 * 2 } == true, "≈12 s, 16 kHz mono WAV (\(both.wav?.count ?? 0) bytes)")
+    expect(both.wav.map { String(decoding: $0.prefix(4), as: UTF8.self) == "RIFF" && $0.count < SongFinderService.maxUploadBytes } == true, "WAV under Song Finder's 10 MB cap")
+    let onlyMic = SongFinderAudio.prepare(system: ([Float](repeating: 0, count: 12 * 48_000), 48_000), microphone: (tone(12, 44_100), 44_100))
+    expect(!onlyMic.systemHasSound && onlyMic.microphoneHasSound && onlyMic.wav != nil, "silent Mac audio left out, mic still sent")
+    let onlySystem = SongFinderAudio.prepare(system: (tone(12, 48_000), 48_000), microphone: nil)
+    expect(onlySystem.systemHasSound && !onlySystem.microphoneHasSound && onlySystem.wav != nil, "no microphone → Mac audio only")
+    let nothing = SongFinderAudio.prepare(system: ([Float](repeating: 0, count: 48_000 * 12), 48_000), microphone: nil)
+    expect(nothing.wav == nil && !nothing.systemHasSound, "silence is never uploaded")
+    expect(SongFinderAudio.prepare(system: nil, microphone: nil).wav == nil, "no source → nothing")
+
+    let mixed = SongFinderAudio.mix(system: tone(4, 16_000, 0.9), microphone: tone(5, 16_000, 0.9, 660))
+    expect(mixed.count == 5 * 16_000 && mixed.allSatisfy { abs($0) <= 0.98 + 1e-6 }, "longest source kept, never clipped")
+    let micOnlyTail = Array(mixed.suffix(8_000))
+    let systemPart = SongFinderAudio.mix(system: tone(4, 16_000), microphone: [])
+    expect(SongFinderAudio.rms(micOnlyTail) < SongFinderAudio.rms(systemPart), "microphone is mixed under the Mac audio")
+    expect(SongFinderAudio.mix(system: [], microphone: []).isEmpty, "nothing to mix")
+}
+
+await test("Song Finder flow: consent first, both sources when allowed, one mocked upload, honest statuses (no real network)") {
+    let session = SongFinderService.makeSession(protocolClasses: [MockSongFinder.self])
+    let d = freshDefaults()
+    let audio = DualAudio()
+    var micAllowed = true
+    var micAsked = 0
+    @MainActor func make(_ duration: Duration = .milliseconds(30), systemSupported: Bool = true) -> SongFinderRecognition {
+        SongFinderRecognition(defaults: d, session: session, audio: audio, systemAudioSupported: systemSupported, listenDuration: duration,
+                              microphoneAccess: { await MainActor.run { micAsked += 1; return micAllowed } })
+    }
+    let r = make()
+    MockSongFinder.reset(200, sfMatchJSON)
+    expect(r.selected && !r.consented && r.phase == .idle, "default method, nothing agreed, idle at launch")
+    r.start()
+    expect(r.phase == .needsConsent && audio.begun.isEmpty && micAsked == 0 && MockSongFinder.count == 0,
+           "first press only shows the disclosure: no permission prompt, no audio, no upload")
+    d.set(MusicRecognitionMode.system.rawValue, forKey: MusicRecognitionMode.defaultsKey)
+    r.giveConsent()
+    r.start()
+    expect(r.phase == .notSelected && audio.begun.isEmpty && MockSongFinder.count == 0, "macOS chosen → Song Finder refuses even with consent")
+    d.set(MusicRecognitionMode.audd.rawValue, forKey: MusicRecognitionMode.defaultsKey)
+    r.start()
+    expect(r.phase == .notSelected, "AudD chosen → Song Finder refuses")
+    d.removeObject(forKey: MusicRecognitionMode.defaultsKey)
+
+    r.start(); await settle(r)
+    expect(r.phase == .finished(.matched(.init(title: "Blinding Lights", artist: "The Weeknd", album: "After Hours"))), "mocked match shown")
+    expect(audio.begun == [.systemAudio, .microphone] && micAsked == 1, "both sources started after the microphone check")
+    expect(r.sources.systemAudio == .included && r.sources.microphone == .included && r.sources.included == [.systemAudio, .microphone],
+           "both reported as included")
+    let first = MockSongFinder.lock.withLock { MockSongFinder.requests.first }
+    let body = MockSongFinder.lock.withLock { MockSongFinder.bodies.first } ?? Data()
+    expect(MockSongFinder.count == 1 && first?.url?.host == "songfinder.dev" && first?.url?.path == "/api/music/recognize", "exactly one request to Song Finder")
+    expect(first?.value(forHTTPHeaderField: "X-SongFinder-Client") == "cli", "documented client header sent")
+    expect(body.count <= 44 + 12 * 16_000 * 2 + 600 && body.count > 44 + 11 * 16_000 * 2, "one ≈12 s clip uploaded (12.5 s offered)")
+    expect(r.heldClips.isEmpty && audio.clips.allSatisfy { $0.sampleCount == 0 && $0.isClosed } && audio.ended >= 1, "audio dropped and inputs stopped")
+    expect(r.keepsIslandOpen() && !r.keepsIslandOpen(now: Date().addingTimeInterval(SongFinderRecognition.resultHold + 1)),
+           "the result keeps the island up briefly, then lets it close")
+
+    // Microphone permission refused: Mac audio only, said so.
+    audio.begun = []; micAllowed = false
+    MockSongFinder.reset(200, sfMatchJSON)
+    r.start(); await settle(r)
+    expect(audio.begun == [.systemAudio] && r.sources.microphone == .denied && r.sources.included == [.systemAudio] && MockSongFinder.count == 1,
+           "mic denied → never started, Mac audio alone sent, reported as not allowed")
+    micAllowed = true
+
+    // Mac audio silent (nothing playing or not allowed): microphone only.
+    audio.begun = []; audio.systemAmplitude = 0
+    MockSongFinder.reset(200, sfMatchJSON)
+    r.start(); await settle(r)
+    expect(r.sources.systemAudio == .silent && r.sources.included == [.microphone] && MockSongFinder.count == 1, "silent Mac audio reported, mic sent")
+
+    // Nothing usable: no upload.
+    audio.micAmplitude = 0
+    MockSongFinder.reset(200, sfMatchJSON)
+    r.start(); await settle(r)
+    expect(r.phase == .noAudio && MockSongFinder.count == 0 && r.sources.systemAudio == .silent && r.sources.microphone == .silent, "both silent → nothing sent")
+    audio.systemAmplitude = 0.3; audio.micAmplitude = 0.2
+
+    // Devices that can't start.
+    audio.systemOK = false; micAllowed = false
+    r.start(); await settle(r)
+    expect(r.phase == .noAudio && r.sources.systemAudio == .unavailable && r.sources.microphone == .denied && MockSongFinder.count == 0,
+           "no source could start → explicit statuses, nothing sent")
+    audio.systemOK = true; micAllowed = true
+    audio.micOK = false
+    MockSongFinder.reset(200, sfMatchJSON)
+    r.start(); await settle(r)
+    expect(r.sources.microphone == .unavailable && r.sources.included == [.systemAudio] && MockSongFinder.count == 1, "mic device failure isn't hidden")
+    audio.micOK = true
+
+    // macOS older than 14.2: no Mac audio capture.
+    audio.begun = []
+    let old = make(systemSupported: false)
+    MockSongFinder.reset(200, sfMatchJSON)
+    old.start(); await settle(old)
+    expect(audio.begun == [.microphone] && old.sources.systemAudio == .unsupported && old.sources.included == [.microphone], "unsupported Mac audio stated")
+
+    // Server answers are mapped honestly.
+    let cases: [(Int, String, SongFinderRecognition.Phase)] = [
+        (200, #"{"code":0,"message":"ok","data":{"matched":false}}"#, .finished(.noMatch)),
+        (429, #"{"code":429,"message":"Too many requests"}"#, .finished(.rateLimited)),
+        (403, #"{"code":403,"message":"Forbidden"}"#, .finished(.refused(403))),
+        (502, "<html>Bad gateway</html>", .finished(.serverError(502))),
+        (200, #"{"code":2,"message":"Unsupported audio"}"#, .finished(.serviceError("Unsupported audio", 200))),
+        (200, "not json", .finished(.badResponse(200))),
+    ]
+    for (status, json, expected) in cases {
+        MockSongFinder.reset(status, json)
+        r.start(); await settle(r)
+        expect(r.phase == expected && MockSongFinder.count == 1, "HTTP \(status) \(json.prefix(30)) → \(expected)")
+    }
+    MockSongFinder.lock.withLock { MockSongFinder.reply = nil; MockSongFinder.requests = [] }
+    r.start(); await settle(r)
+    expect(r.phase == .transport(.offline), "offline → connectivity error, not 'no match'")
+    MockSongFinder.reset(); MockSongFinder.lock.withLock { MockSongFinder.failure = .timedOut }
+    r.start(); await settle(r)
+    expect(r.phase == .transport(.timeout), "timeout reported as a timeout")
+
+    // Cancel while recording: nothing sent, audio discarded.
+    let slow = make(.seconds(5))
+    MockSongFinder.reset(200, sfMatchJSON)
+    slow.start()
+    let deadline = Date().addingTimeInterval(3)
+    while slow.phase != .listening && Date() < deadline { try await Task.sleep(for: .milliseconds(5)) }
+    let held = slow.heldClips
+    expect(slow.phase == .listening && held.count == 2 && slow.listeningStartedAt != nil, "recording holds two clips in memory")
+    slow.cancel()
+    expect(slow.phase == .cancelled(afterSending: false) && slow.heldClips.isEmpty && held.allSatisfy { $0.isClosed && $0.sampleCount == 0 },
+           "cancel discards both clips")
+    try await Task.sleep(for: .milliseconds(100))
+    expect(MockSongFinder.count == 0 && slow.phase == .cancelled(afterSending: false), "cancelled before sending → no upload, no late result")
+
+    // Cancel while the request is in flight: said honestly that it may have arrived.
+    MockSongFinder.reset(200, sfMatchJSON); MockSongFinder.lock.withLock { MockSongFinder.delay = 1 }
+    r.start()
+    let sendDeadline = Date().addingTimeInterval(3)
+    while r.phase != .sending && Date() < sendDeadline { try await Task.sleep(for: .milliseconds(5)) }
+    r.cancel()
+    try await Task.sleep(for: .milliseconds(1_200))
+    expect(r.phase == .cancelled(afterSending: true), "cancel during upload says Song Finder may have received it; late answer ignored")
+
+    r.withdrawConsent()
+    MockSongFinder.reset(200, sfMatchJSON)
+    r.start()
+    expect(!r.consented && r.phase == .needsConsent && MockSongFinder.count == 0, "withdrawn consent blocks again")
+}
+
+await test("Song Finder wiring: user press only, closed island stops it, disclosure wording (3 languages), README") {
+    let page = try String(contentsOfFile: "Sources/NotchIsland/SongFinderRecognition.swift", encoding: .utf8)
+    let ui = page.components(separatedBy: "struct SongFinderPage")[1]
+    expect(!ui.contains("onAppear") && !ui.contains(".task {"), "the page never starts recording by itself")
+    expect(ui.components(separatedBy: "recognition.giveConsent()").count == 2, "consent is only given by the Agree button")
+    expect(ui.contains(".onDisappear { recognition.cancel() }"), "leaving the page stops it")
+    expect(ui.contains("paused: reduceMotion") && !ui.contains("scaleEffect"), "listening indicator honors Reduce Motion (opacity only)")
+    let controller = try String(contentsOfFile: "Sources/NotchIsland/IslandController.swift", encoding: .utf8)
+    expect(controller.contains("if !expanded { audd.cancel(); songFinder.cancel() }"), "closing the island cancels recording and upload")
+    expect(controller.contains("songFinder.keepsIslandOpen() || model.keepOpenContains"), "the island stays visible while recording/sending")
+    let settings = try String(contentsOfFile: "Sources/NotchIsland/SettingsWindow.swift", encoding: .utf8)
+    expect(settings.contains("songFinder.withdrawConsent()") && settings.contains("if mode != .songFinder { songFinder.cancel() }"),
+           "Settings can withdraw consent; switching away stops Song Finder")
+
+    let lang = LanguageSettings.shared
+    let saved = lang.language; defer { lang.language = saved }
+    for language in [AppLanguage.english, .traditionalChinese, .simplifiedChinese] {
+        lang.language = language
+        for key in [L10nKey.sfConsentBody, .sfSettingsDisclosure] {
+            let text = lang.t(key)
+            for fact in ["songfinder.dev", "12", "ACRCloud", "AudioTag", "Shazam"] { expect(text.contains(fact), "\(language) \(key) states \(fact)") }
+            expect([["microphone", "麥克風", "麦克风"], ["Mac"]].allSatisfy { words in words.contains(where: text.contains) }, "\(language) \(key) names both sources")
+            for claim in ["never leaves", "stays on your device", "不會離開", "不会离开", "永不上傳", "不会上传"] {
+                expect(!text.contains(claim), "\(language) \(key) makes no 'audio never leaves' claim")
+            }
+        }
+        expect(["third-party", "第三方"].contains(where: lang.t(.sfConsentBody).contains), "\(language) says third party")
+        let noMatch = lang.t(.sfNoMatch)
+        for key in [L10nKey.sfRateLimited, .sfOffline, .sfTimeout, .sfServerError, .sfRefused, .sfNoAudio, .sfBadResponse, .sfSecure] {
+            expect(lang.t(key) != noMatch, "\(language) \(key) differs from 'not found'")
+        }
+        expect(lang.t(.sfRateLimited).contains("429") && lang.t(.sfRefused, "403").contains("403"), "\(language) shows the HTTP status")
+        expect(lang.t(.sfCancelledSending) != lang.t(.sfCancelled), "\(language) distinguishes cancel before/after upload started")
+        expect(lang.t(.qaShazam) == lang.t(.recognitionSettings), "\(language) button and setting share the name")
+    }
+    for (file, words) in [("README.md", ["Song Finder", "songfinder.dev", "ACRCloud", "麥克風", "檢查更新"]),
+                          ("README.en.md", ["Song Finder", "songfinder.dev", "ACRCloud", "microphone", "Check for Updates"])] {
+        let readme = try String(contentsOfFile: file, encoding: .utf8)
+        for word in words { expect(readme.contains(word), "\(file) mentions \(word)") }
+        for claim in ["never leaves", "不會離開", "沒有將私人資料上傳"] { expect(!readme.contains(claim), "\(file) makes no false 'never leaves' claim: \(claim)") }
+    }
+}
+
+// MARK: - 0.1.2: software update from GitHub releases
+
+func releaseJSON(tag: String = "v0.1.3", draft: Bool = false, prerelease: Bool = false, html: String? = nil,
+                 name: String? = "Notch Island v0.1.3", body: String = "- Faster\r\n- Song Finder", assets: [[String: Any]]? = nil) -> Data {
+    let version = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
+    let asset: [String: Any] = ["name": "NotchIsland-\(version).dmg", "state": "uploaded", "size": 300_000,
+                                "digest": "sha256:" + String(repeating: "AB", count: 32),
+                                "content_type": "application/x-apple-diskimage",
+                                "browser_download_url": "https://github.com/LeoFeng0816/Notch-Island/releases/download/\(tag)/NotchIsland-\(version).dmg"]
+    var object: [String: Any] = ["tag_name": tag, "draft": draft, "prerelease": prerelease, "body": body,
+                                 "html_url": html ?? "https://github.com/LeoFeng0816/Notch-Island/releases/tag/\(tag)",
+                                 "published_at": "2026-12-01T08:00:00Z", "assets": assets ?? [asset]]
+    if let name { object["name"] = name }
+    return try! JSONSerialization.data(withJSONObject: object)
+}
+
+func releaseAsset(_ changes: [String: Any?]) -> [String: Any] {
+    var base: [String: Any] = ["name": "NotchIsland-0.1.3.dmg", "state": "uploaded", "size": 300_000,
+                               "digest": "sha256:" + String(repeating: "ab", count: 32),
+                               "browser_download_url": "https://github.com/LeoFeng0816/Notch-Island/releases/download/v0.1.3/NotchIsland-0.1.3.dmg"]
+    for (key, value) in changes { base[key] = value }
+    return base
+}
+
+await test("software update: strict versions, no downgrade, no pre-release") {
+    expect(AppVersion("0.1.2") == AppVersion(0, 1, 2) && AppVersion("v0.1.2") == AppVersion(0, 1, 2), "plain and v-prefixed tags")
+    for bad in ["0.1", "0.1.2-beta.1", "v0.1.2.1", "0.1.x", "", "v", "0.1.2 ", " 0.1.2", "+0.1.2", "0.-1.2", "１.0.0", "1234567.0.0", "V0.1.2"] {
+        expect(AppVersion(bad) == nil, "rejects \"\(bad)\"")
+    }
+    expect(AppVersion("0.1.10")! > AppVersion("0.1.9")! && AppVersion("0.2.0")! > AppVersion("0.1.99")! && AppVersion("1.0.0")! > AppVersion("0.9.9")!,
+           "numeric comparison, not text")
+}
+
+await test("software update: GitHub latest-release evaluation (real v0.1.1 snapshot + fixtures)") {
+    let current = AppVersion(0, 1, 2)
+    func eval(_ data: Data, _ status: Int = 200, headers: [String: String] = [:], current: AppVersion? = AppVersion(0, 1, 2)) -> Result<ReleaseSource.CheckResult, ReleaseSource.CheckFailure> {
+        ReleaseSource.evaluate(data: data, status: status, headers: headers, current: current)
+    }
+    // Real answer from api.github.com (captured 2026-11-11, uploader fields removed).
+    let snapshot = try Data(contentsOf: URL(fileURLWithPath: "Tests/fixtures/github-latest-release-v0.1.1.json"))
+    expect(eval(snapshot, current: AppVersion(0, 1, 1)) == .success(.upToDate(latest: AppVersion(0, 1, 1))), "v0.1.1 installed → up to date")
+    expect(eval(snapshot) == .success(.newerThanLatest(latest: AppVersion(0, 1, 1))), "this 0.1.2 review build is never 'updated' to 0.1.1")
+    if case .success(.available(let offer)) = eval(snapshot, current: AppVersion(0, 1, 0)) {
+        expect(offer.version == AppVersion(0, 1, 1) && offer.title == "Notch Island v0.1.1" && offer.pageURL.absoluteString.hasSuffix("/releases/tag/v0.1.1"), "real offer")
+        expect(offer.asset == .success(.init(name: "NotchIsland-0.1.1.dmg",
+                                             url: URL(string: "https://github.com/LeoFeng0816/Notch-Island/releases/download/v0.1.1/NotchIsland-0.1.1.dmg")!,
+                                             size: 5_710_374, sha256: "6300e601ee605c13cb2af8f8b82d2c6be83cbf90361d3cfae2eb4a7e7f00d50a")),
+               "real asset: exact URL, size and GitHub digest")
+        expect(!offer.notes.contains("\r") && !offer.notes.isEmpty && offer.publishedAt != nil, "notes cleaned, date parsed")
+    } else { expect(false, "v0.1.0 should be offered v0.1.1") }
+
+    guard case .success(.available(let offer)) = eval(releaseJSON()) else { expect(false, "newer release offered"); return }
+    expect(offer.version == AppVersion(0, 1, 3) && offer.notes == "- Faster\n- Song Finder", "version and notes")
+    expect(offer.asset.map(\.sha256) == .success(String(repeating: "ab", count: 32)), "upper-case digest normalized")
+    expect(eval(releaseJSON(name: nil)).map { if case .available(let o) = $0 { return o.title } else { return "" } } == .success("Notch Island 0.1.3"), "missing name")
+    expect(eval(releaseJSON(tag: "v0.1.2")) == .success(.upToDate(latest: current)), "same version")
+    expect(eval(releaseJSON(tag: "v0.0.9")) == .success(.newerThanLatest(latest: AppVersion(0, 0, 9))), "older release → no downgrade offered")
+    expect(eval(releaseJSON(prerelease: true)) == .failure(.prerelease) && eval(releaseJSON(draft: true)) == .failure(.prerelease), "drafts and pre-releases never offered")
+    expect(eval(releaseJSON(tag: "v0.1.3-beta.1")) == .failure(.unrecognizedTag("v0.1.3-beta.1")) && eval(releaseJSON(tag: "nightly")) == .failure(.unrecognizedTag("nightly")),
+           "unrecognized tags refused")
+    expect(eval(releaseJSON(html: "https://github.com/someone-else/Notch-Island/releases/tag/v0.1.3")) == .failure(.untrustedPage)
+           && eval(releaseJSON(html: "http://github.com/LeoFeng0816/Notch-Island/releases/tag/v0.1.3")) == .failure(.untrustedPage),
+           "release page must be this repository over HTTPS")
+    expect(eval(releaseJSON(), current: nil) == .failure(.currentVersionUnknown), "unknown own version → no comparison")
+
+    func assetProblem(_ assets: [[String: Any]]) -> ReleaseSource.AssetProblem? {
+        if case .success(.available(let offer)) = eval(releaseJSON(assets: assets)), case .failure(let problem) = offer.asset { return problem }
+        return nil
+    }
+    expect(assetProblem([releaseAsset(["browser_download_url": "https://evil.example/NotchIsland-0.1.3.dmg"])]) == .unexpectedURL, "foreign host")
+    expect(assetProblem([releaseAsset(["browser_download_url": "https://github.com/LeoFeng0816/Notch-Island/releases/download/v0.1.2/NotchIsland-0.1.3.dmg"])]) == .unexpectedURL,
+           "another tag's path")
+    expect(assetProblem([releaseAsset(["browser_download_url": "http://github.com/LeoFeng0816/Notch-Island/releases/download/v0.1.3/NotchIsland-0.1.3.dmg"])]) == .unexpectedURL,
+           "plain HTTP")
+    expect(assetProblem([releaseAsset(["digest": nil])]) == .noDigest && assetProblem([releaseAsset(["digest": "sha1:abc"])]) == .noDigest
+           && assetProblem([releaseAsset(["digest": "sha256:" + String(repeating: "a", count: 63)])]) == .noDigest
+           && assetProblem([releaseAsset(["digest": "sha256:" + String(repeating: "g", count: 64)])]) == .noDigest, "missing / wrong digest")
+    expect(assetProblem([releaseAsset(["name": "NotchIsland-0.1.2.dmg"])]) == .missing && assetProblem([]) == .missing, "no matching file")
+    expect(assetProblem([releaseAsset([:]), releaseAsset([:])]) == .duplicate, "two files with the same name")
+    expect(assetProblem([releaseAsset(["state": "open"])]) == .notUploaded, "upload in progress")
+    expect(assetProblem([releaseAsset(["size": 0])]) == .badSize && assetProblem([releaseAsset(["size": 400 * 1024 * 1024])]) == .badSize, "size bounds")
+
+    expect(eval(Data("{}".utf8), 403, headers: ["X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "1794407755"])
+           == .failure(.rateLimited(resetAt: Date(timeIntervalSince1970: 1_794_407_755))), "GitHub's unauthenticated limit with reset time")
+    expect(eval(Data(), 429) == .failure(.rateLimited(resetAt: nil)), "429")
+    expect(eval(Data("{}".utf8), 403) == .failure(.http(403)), "plain 403")
+    expect(eval(Data(), 404) == .failure(.noRelease) && eval(Data(), 500) == .failure(.http(500)), "404 / 500")
+    expect(eval(Data("<html>".utf8)) == .failure(.badResponse), "not JSON")
+    expect(ReleaseSource.checkFailure(for: URLError(.notConnectedToInternet)) == .offline && ReleaseSource.checkFailure(for: URLError(.timedOut)) == .timeout,
+           "connectivity errors")
+    expect(ReleaseSource.cleaned("a\u{0007}b\r\nc", limit: 100) == "ab\nc" && ReleaseSource.cleaned(String(repeating: "x", count: 50), limit: 10).count == 11,
+           "release text sanitized and capped")
+    let request = ReleaseSource.latestRequest()
+    expect(request.url?.absoluteString == "https://api.github.com/repos/LeoFeng0816/Notch-Island/releases/latest"
+           && request.value(forHTTPHeaderField: "Accept") == "application/vnd.github+json"
+           && request.value(forHTTPHeaderField: "Authorization") == nil, "documented endpoint, no token")
+}
+
+/// Fake GitHub: the release download redirects to the asset CDN, which serves `payload`.
+final class MockRelease: URLProtocol {
+    static let lock = NSLock()
+    static var payload = Data()
+    static var cdnHost = "release-assets.githubusercontent.com"
+    static var status = 200
+    static var truncate = 0
+    static var latestJSON = Data()
+    static var urls: [URL] = []
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        let url = request.url!
+        let (payload, host, status, truncate, latest) = Self.lock.withLock { () -> (Data, String, Int, Int, Data) in
+            Self.urls.append(url); return (Self.payload, Self.cdnHost, Self.status, Self.truncate, Self.latestJSON)
+        }
+        if url.host == "api.github.com" {
+            client?.urlProtocol(self, didReceive: HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: latest)
+            client?.urlProtocolDidFinishLoading(self)
+            return
+        }
+        if url.host == "github.com" {
+            let target = URL(string: "https://\(host)/github-production-release-asset/1/x?sig=1")!
+            let response = HTTPURLResponse(url: url, statusCode: 302, httpVersion: nil, headerFields: ["Location": target.absoluteString])!
+            client?.urlProtocol(self, wasRedirectedTo: URLRequest(url: target), redirectResponse: response)
+            client?.urlProtocolDidFinishLoading(self)
+            return
+        }
+        guard status == 200 else {
+            client?.urlProtocol(self, didReceive: HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: Data("Not Found".utf8))
+            client?.urlProtocolDidFinishLoading(self)
+            return
+        }
+        let body = truncate > 0 ? payload.prefix(payload.count - truncate) : payload
+        client?.urlProtocol(self, didReceive: HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(body))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
+}
+
+func tempDirectory(_ name: String) -> URL {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("NotchIslandTests-\(name)-\(UUID().uuidString)", isDirectory: true)
+    try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    return url
+}
+
+await test("software update: verified download — trusted redirects, size, SHA-256, never overwrites, quarantined (mocked; nothing run)") {
+    // Not a disk image: random bytes, never opened or executed.
+    var generator = SystemRandomNumberGenerator()
+    let payload = Data((0..<300_000).map { _ in UInt8.random(in: 0...255, using: &generator) })
+    let digest = SHA256.hash(data: payload).map { String(format: "%02x", $0) }.joined()
+    MockRelease.lock.withLock { MockRelease.payload = payload; MockRelease.cdnHost = "release-assets.githubusercontent.com"; MockRelease.status = 200; MockRelease.truncate = 0; MockRelease.urls = [] }
+    let session = UpdateDownload.makeSession(protocolClasses: [MockRelease.self])
+    let page = URL(string: "https://github.com/LeoFeng0816/Notch-Island/releases/tag/v0.1.3")!
+    let good = ReleaseSource.Asset(name: "NotchIsland-0.1.3.dmg",
+                                   url: URL(string: "https://github.com/LeoFeng0816/Notch-Island/releases/download/v0.1.3/NotchIsland-0.1.3.dmg")!,
+                                   size: payload.count, sha256: digest)
+    let dest = tempDirectory("dest")
+    defer { try? FileManager.default.removeItem(at: dest) }
+    func stagingCount() -> Int {
+        (try? FileManager.default.contentsOfDirectory(atPath: FileManager.default.temporaryDirectory.path))?.filter { $0.hasPrefix("NotchIsland-Update-") }.count ?? 0
+    }
+    let stagingBefore = stagingCount()
+
+    let saved = try await UpdateDownload.download(good, pageURL: page, session: session, destinations: [dest])
+    expect(saved.lastPathComponent == "NotchIsland-0.1.3.dmg" && saved.deletingLastPathComponent().standardizedFileURL == dest.standardizedFileURL, "saved in the destination")
+    expect((try? Data(contentsOf: saved)) == payload && (try? UpdateDownload.sha256Hex(of: saved)) == digest, "exact bytes, digest re-checked from disk")
+    let urls = MockRelease.lock.withLock { MockRelease.urls }
+    expect(urls.map { $0.host ?? "" } == ["github.com", "release-assets.githubusercontent.com"], "followed GitHub's redirect to its asset host only (\(urls))")
+    expect(getxattr(saved.path, "com.apple.quarantine", nil, 0, 0, 0) > 0, "marked quarantined, so Gatekeeper still checks it")
+    let quarantine = (try? saved.resourceValues(forKeys: [.quarantinePropertiesKey]))?.quarantineProperties
+    expect((quarantine?[kLSQuarantineTypeKey as String] as? String) == (kLSQuarantineTypeWebDownload as String), "quarantine type is a web download")
+    expect(stagingCount() == stagingBefore, "staging folder removed")
+
+    let second = try await UpdateDownload.download(good, pageURL: page, session: session, destinations: [dest])
+    expect(second.lastPathComponent == "NotchIsland-0.1.3 (2).dmg" && (try? Data(contentsOf: saved)) == payload, "existing file never overwritten")
+
+    func failure(_ asset: ReleaseSource.Asset, destinations: [URL]? = nil) async -> UpdateDownload.Failure? {
+        do { _ = try await UpdateDownload.download(asset, pageURL: page, session: session, destinations: destinations ?? [dest]); return nil }
+        catch { return error as? UpdateDownload.Failure }
+    }
+    let filesBefore = try FileManager.default.contentsOfDirectory(atPath: dest.path).count
+    var wrong = good; wrong.sha256 = String(repeating: "0", count: 64)
+    let mismatch = await failure(wrong)
+    expect(mismatch == .checksumMismatch, "SHA-256 mismatch refused")
+    var bigger = good; bigger.size = payload.count + 10
+    let short = await failure(bigger)
+    expect(short == .sizeMismatch(expected: payload.count + 10, actual: payload.count), "short download refused")
+    var smaller = good; smaller.size = payload.count - 10
+    if case .sizeMismatch = await failure(smaller) ?? .cancelled {} else { expect(false, "oversized download refused") }
+    MockRelease.lock.withLock { MockRelease.truncate = 1 }
+    if case .sizeMismatch = await failure(good) ?? .cancelled {} else { expect(false, "truncated body refused") }
+    MockRelease.lock.withLock { MockRelease.truncate = 0; MockRelease.cdnHost = "evil.example" }
+    let redirected = await failure(good)
+    expect(redirected == .redirectRefused, "redirect away from GitHub refused (\(String(describing: redirected)))")
+    MockRelease.lock.withLock { MockRelease.cdnHost = "release-assets.githubusercontent.com"; MockRelease.status = 404 }
+    let missing = await failure(good)
+    expect(missing == .http(404), "HTTP error shown")
+    MockRelease.lock.withLock { MockRelease.status = 200 }
+    let filesAfter = try FileManager.default.contentsOfDirectory(atPath: dest.path).count
+    expect(filesAfter == filesBefore, "failed downloads leave nothing behind")
+    expect(stagingCount() == stagingBefore, "no staging leftovers after failures")
+    expect(TrustedReleaseRedirects.allows(URL(string: "https://objects.githubusercontent.com/x")) && !TrustedReleaseRedirects.allows(URL(string: "http://github.com/x"))
+           && !TrustedReleaseRedirects.allows(URL(string: "https://github.com.evil.example/x")), "redirect allowlist is exact")
+
+    // Downloads folder refused → next destination (Application Support).
+    let blocker = dest.appendingPathComponent("not-a-folder")
+    FileManager.default.createFile(atPath: blocker.path, contents: Data())
+    let fallback = tempDirectory("fallback")
+    defer { try? FileManager.default.removeItem(at: fallback) }
+    let moved = try await UpdateDownload.download(good, pageURL: page, session: session, destinations: [blocker.appendingPathComponent("x"), fallback])
+    expect(moved.deletingLastPathComponent().standardizedFileURL == fallback.standardizedFileURL, "falls back to the next folder")
+
+    let offline = URLSession(configuration: { let c = URLSessionConfiguration.ephemeral; c.protocolClasses = [MockSongFinder.self]; return c }())
+    MockSongFinder.lock.withLock { MockSongFinder.reply = nil; MockSongFinder.failure = nil; MockSongFinder.delay = 0 }
+    do { _ = try await UpdateDownload.download(good, pageURL: page, session: offline, destinations: [dest]); expect(false, "offline") }
+    catch { expect(error as? UpdateDownload.Failure == .offline, "offline download → offline") }
+
+    let source = try String(contentsOfFile: "Sources/NotchIsland/SoftwareUpdate.swift", encoding: .utf8)
+    for forbidden in ["spctl", "xattr", "quarantineProperties = nil", "\"/Applications", "hdiutil", "replaceItemAt", "--master-disable", "Authorization"] {
+        expect(!source.contains(forbidden), "updater never uses \(forbidden)")
+    }
+    expect(source.components(separatedBy: "Process()").count == 2 && source.contains("/usr/bin/ditto"), "the only process is the system's ditto (backup)")
+}
+
+await test("software update: controller flow, install location, backup of the current app (temp copies only)") {
+    var generator = SystemRandomNumberGenerator()
+    let payload = Data((0..<50_000).map { _ in UInt8.random(in: 0...255, using: &generator) })
+    let digest = SHA256.hash(data: payload).map { String(format: "%02x", $0) }.joined()
+    let assets: [[String: Any]] = [["name": "NotchIsland-0.1.3.dmg", "state": "uploaded", "size": payload.count, "digest": "sha256:\(digest)",
+                                    "browser_download_url": "https://github.com/LeoFeng0816/Notch-Island/releases/download/v0.1.3/NotchIsland-0.1.3.dmg"]]
+    MockRelease.lock.withLock {
+        MockRelease.payload = payload; MockRelease.latestJSON = releaseJSON(assets: assets)
+        MockRelease.cdnHost = "release-assets.githubusercontent.com"; MockRelease.status = 200; MockRelease.truncate = 0
+    }
+    let fakeApp = tempDirectory("app").appendingPathComponent("Notch Island.app", isDirectory: true)
+    try FileManager.default.createDirectory(at: fakeApp.appendingPathComponent("Contents/MacOS"), withIntermediateDirectories: true)
+    try Data("<plist/>".utf8).write(to: fakeApp.appendingPathComponent("Contents/Info.plist"))
+    let dest = tempDirectory("dl"), backups = tempDirectory("backups")
+    defer { for url in [fakeApp.deletingLastPathComponent(), dest, backups] { try? FileManager.default.removeItem(at: url) } }
+    let updater = SoftwareUpdateController(apiSession: ReleaseSource.makeAPISession(protocolClasses: [MockRelease.self]),
+                                           downloadSession: UpdateDownload.makeSession(protocolClasses: [MockRelease.self]),
+                                           currentVersion: AppVersion(0, 1, 2), bundleURL: fakeApp, destinations: [dest], backupsDirectory: backups)
+    expect(updater.check == .idle && updater.download == .idle, "nothing checked or downloaded at launch")
+    updater.downloadUpdate()
+    expect(updater.download == .idle, "no download before a check offers one")
+    updater.checkNow()
+    for _ in 0..<300 where updater.check == .checking { try await Task.sleep(for: .milliseconds(10)) }
+    expect(updater.offer?.version == AppVersion(0, 1, 3), "update offered after the user's check (\(updater.check))")
+    updater.downloadUpdate()
+    for _ in 0..<500 { if case .downloading = updater.download { try await Task.sleep(for: .milliseconds(10)) } else { break } }
+    if case .verified(let file) = updater.download {
+        expect((try? Data(contentsOf: file)) == payload && file.deletingLastPathComponent().standardizedFileURL == dest.standardizedFileURL, "verified file saved")
+    } else { expect(false, "download verified: \(updater.download)") }
+    expect(FileManager.default.fileExists(atPath: fakeApp.appendingPathComponent("Contents/Info.plist").path), "the current app is untouched")
+
+    updater.backupCurrentApp()
+    for _ in 0..<500 where updater.backup == .working { try await Task.sleep(for: .milliseconds(10)) }
+    if case .done(let zip) = updater.backup {
+        expect(zip.pathExtension == "zip" && zip.lastPathComponent.hasPrefix("Notch Island 0.1.2 backup "), "backup named with the version")
+        let restore = tempDirectory("restore")
+        defer { try? FileManager.default.removeItem(at: restore) }
+        let unzip = Process()
+        unzip.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        unzip.arguments = ["-x", "-k", zip.path, restore.path]
+        try unzip.run(); unzip.waitUntilExit()
+        expect(FileManager.default.fileExists(atPath: restore.appendingPathComponent("Notch Island.app/Contents/Info.plist").path), "backup restores the app bundle")
+    } else { expect(false, "backup done: \(updater.backup)") }
+    do { _ = try await AppBackup.backup(app: dest, version: "0", into: backups); expect(false, "not an app") }
+    catch { expect(error as? AppBackup.Failure == .notAnApp, "only .app bundles are backed up") }
+
+    // Newer than the latest release: nothing to download.
+    MockRelease.lock.withLock { MockRelease.latestJSON = releaseJSON(tag: "v0.1.1", assets: []) }
+    updater.checkNow()
+    for _ in 0..<300 where updater.check == .checking { try await Task.sleep(for: .milliseconds(10)) }
+    expect(updater.check == .done(.newerThanLatest(latest: AppVersion(0, 1, 1))) && updater.offer == nil, "no downgrade offered")
+
+    expect(InstallLocation.assess(URL(fileURLWithPath: "/private/var/folders/xy/T/AppTranslocation/ABC/d/Notch Island.app")) == .translocated, "App Translocation")
+    expect(InstallLocation.assess(URL(fileURLWithPath: "/System/Applications/Calculator.app")) == .readOnlyVolume, "sealed system volume is read-only")
+    expect(InstallLocation.assess(fakeApp) == .writable(folder: fakeApp.deletingLastPathComponent()), "writable folder")
+    let locked = tempDirectory("locked")
+    try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: locked.path)
+    expect(InstallLocation.assess(locked.appendingPathComponent("Notch Island.app")) == .notWritable(folder: locked), "folder needing an administrator")
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path)
+    try? FileManager.default.removeItem(at: locked)
+
+    let lang = LanguageSettings.shared
+    let saved = lang.language; defer { lang.language = saved }
+    for language in [AppLanguage.english, .traditionalChinese, .simplifiedChinese] {
+        lang.language = language
+        let authenticity = lang.t(.updAuthenticity)
+        expect(authenticity.contains("ad-hoc") && ["notarized", "公證", "公证"].contains(where: authenticity.contains), "\(language): checksum ≠ authenticity, says ad-hoc/unnotarized")
+        expect(lang.t(.updGatekeeper).contains("Gatekeeper"), "\(language): Gatekeeper is not bypassed")
+        expect(["Keep Both", "兩者都保留", "保留两者"].contains(where: lang.t(.updSteps).contains), "\(language): how to keep the original copy")
+        expect(lang.t(.updPrivacy).contains("api.github.com"), "\(language): says what is contacted")
+    }
 }
 
 // MARK: - Live network (opt-in)

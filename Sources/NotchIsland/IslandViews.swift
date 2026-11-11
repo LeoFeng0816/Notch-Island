@@ -103,6 +103,7 @@ struct IslandRootView: View {
     let clipboard: ClipboardStore
     let shazam: ShazamRecognizer
     let audd: AudDRecognition
+    let songFinder: SongFinderRecognition
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -185,6 +186,7 @@ struct IslandRootView: View {
         .environmentObject(clipboard)
         .environmentObject(shazam)
         .environmentObject(audd)
+        .environmentObject(songFinder)
     }
 }
 
@@ -268,6 +270,7 @@ struct ExpandedContent: View {
     @ObservedObject var lang: LanguageSettings
     @EnvironmentObject var stopwatch: Stopwatch
     @EnvironmentObject private var audd: AudDRecognition
+    @EnvironmentObject private var songFinder: SongFinderRecognition
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -338,6 +341,9 @@ struct ExpandedContent: View {
                                 .transition(.opacity)
                         case .audd:
                             ShazamPage(model: model, lang: lang, startWithAudD: true, audd: audd)
+                                .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(y: 8)))
+                        case .songFinder:
+                            SongFinderPage(model: model, lang: lang, recognition: songFinder)
                                 .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(y: 8)))
                         }
                     }

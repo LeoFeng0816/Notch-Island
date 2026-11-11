@@ -25,9 +25,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1.1</string>
+	<string>0.1.2</string>
 	<key>CFBundleVersion</key>
-	<string>7</string>
+	<string>8</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>LSUIElement</key>
@@ -35,7 +35,7 @@
 	<key>NSAppleEventsUsageDescription</key>
 	<string>Notch Island reads playback from supported music apps and YouTube tabs, sends playback commands, and—only when you choose it—asks QuickTime Player to open its screen-recording toolbar.</string>
 	<key>NSAudioCaptureUsageDescription</key>
-	<string>Notch Island uses this Mac’s audio for live levels when enabled, to identify music when you select Mac audio in Shazam (ShazamKit sends audio signatures to Apple), or—only if you choose AudD—to record up to 10 seconds that is uploaded to AudD, a third-party service.</string>
+	<string>Notch Island uses this Mac’s audio for live levels when enabled and, after you press Music Recognition, to identify music: by default about 12 seconds are uploaded to Song Finder (songfinder.dev), a third-party service, after you agree; Shazam sends audio signatures to Apple; AudD, only if you choose it, receives up to 10 seconds.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>Notch Island reads your calendar events to show upcoming events in the calendar widget.</string>
 	<key>NSHighResolutionCapable</key>
@@ -45,6 +45,6 @@
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Notch Island uses an approximate location to show local weather when requested.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Notch Island uses the microphone only when you choose it: up to 30 seconds for Shazam (audio is not stored), or—only if you choose AudD—up to 10 seconds that is uploaded to AudD, a third-party service.</string>
+	<string>Notch Island uses the microphone only after you press Music Recognition: by default about 12 seconds are uploaded to Song Finder (songfinder.dev), a third-party service, after you agree; with Shazam up to 30 seconds (not stored); or—only if you choose AudD—up to 10 seconds uploaded to AudD.</string>
 </dict>
 </plist>

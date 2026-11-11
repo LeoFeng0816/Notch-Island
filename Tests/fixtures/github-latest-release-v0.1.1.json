@@ -1,0 +1,31 @@
+{
+ "url": "https://api.github.com/repos/LeoFeng0816/Notch-Island/releases/441517145",
+ "html_url": "https://github.com/LeoFeng0816/Notch-Island/releases/tag/v0.1.1",
+ "id": 441517145,
+ "tag_name": "v0.1.1",
+ "target_commitish": "main",
+ "name": "Notch Island v0.1.1",
+ "draft": false,
+ "immutable": false,
+ "prerelease": false,
+ "created_at": "2026-11-11T10:01:48Z",
+ "updated_at": "2026-11-11T10:04:30Z",
+ "published_at": "2026-11-11T10:04:30Z",
+ "body": "- 新增充電與低電量提示，可前往電池設定調整低耗電模式。\r\n- 改善歌曲切換時的播放進度，修復剪貼簿權限設定入口。\r\n- 新增音樂辨識服務選擇與授權引導，調整靈動島寬度及 DMG 安裝畫面。\r\n\r\n**音樂辨識：**在測試的 macOS 上，App 無法自動啟動控制中心的音樂辨識；請依 App 指引手動操作或使用捷徑，實際辨識尚待驗證。AudD 為需自行設定並授權的選用第三方服務。\r\n\r\n**安裝：**此版本尚未經 Apple 公證；如被 macOS 阻擋，請參閱 [README 安裝指引](https://github.com/LeoFeng0816/Notch-Island#安裝)。\r\n\r\n### English\r\n\r\n- Added charging and low-battery alerts, with a shortcut to Battery settings.\r\n- Improved track-change progress and fixed the clipboard permission shortcut.\r\n- Added music recognition provider settings and guidance; refined the island and DMG layout.\r\n\r\nOn the tested macOS, automatic Control Center music recognition is unavailable; follow the app’s manual or Shortcuts guidance. Recognition has not yet been verified end to end. AudD is an optional third-party service requiring your own setup and consent.\r\n\r\n**SHA-256:** `6300e601ee605c13cb2af8f8b82d2c6be83cbf90361d3cfae2eb4a7e7f00d50a`",
+ "assets": [
+  {
+   "url": "https://api.github.com/repos/LeoFeng0816/Notch-Island/releases/assets/735021866",
+   "id": 735021866,
+   "name": "NotchIsland-0.1.1.dmg",
+   "label": null,
+   "content_type": "application/x-apple-diskimage",
+   "state": "uploaded",
+   "size": 5710374,
+   "digest": "sha256:6300e601ee605c13cb2af8f8b82d2c6be83cbf90361d3cfae2eb4a7e7f00d50a",
+   "download_count": 4,
+   "created_at": "2026-11-11T10:04:13Z",
+   "updated_at": "2026-11-11T10:04:17Z",
+   "browser_download_url": "https://github.com/LeoFeng0816/Notch-Island/releases/download/v0.1.1/NotchIsland-0.1.1.dmg"
+  }
+ ]
+}

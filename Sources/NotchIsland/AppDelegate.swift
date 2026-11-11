@@ -84,6 +84,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         settingsItem.keyEquivalent = ","
         menu.addItem(settingsItem)
         menu.addItem(item(lang.t(.onboardingMenu), #selector(showOnboarding)))
+        menu.addItem(item(lang.t(.updCheckMenu), #selector(checkForUpdates)))
 
         // Language is chosen only in Settings (General › Language).
         menu.addItem(.separator())
@@ -103,4 +104,5 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func resetStopwatch() { controller.stopwatch.reset() }
     @objc private func openSettings() { controller.openSettings() }
     @objc private func showOnboarding() { controller.showOnboarding() }
+    @objc private func checkForUpdates() { controller.checkForUpdates() }
 }

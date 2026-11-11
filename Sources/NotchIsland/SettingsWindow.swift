@@ -52,6 +52,8 @@ struct SettingsView: View {
     @ObservedObject var clipboard: ClipboardStore
     @ObservedObject var power: PowerAlertController
     @ObservedObject var audDRecognition: AudDRecognition
+    @ObservedObject var songFinder: SongFinderRecognition
+    @ObservedObject var updater: SoftwareUpdateController
     /// Shared with the island (controller); asks Location Services once.
     var useCurrentLocation: () -> Void
     let device: DeviceInfo
@@ -60,11 +62,12 @@ struct SettingsView: View {
 
     /// Widget the user tried to turn on while four were already shown.
     @State private var limitAlertKind: WidgetKind?
-    @AppStorage(MusicRecognitionMode.defaultsKey) private var recognitionMode = MusicRecognitionMode.system.rawValue
+    @AppStorage(MusicRecognitionMode.defaultsKey) private var recognitionMode = MusicRecognitionMode.songFinder.rawValue
 
     var body: some View {
         Form {
             generalSection
+            SoftwareUpdateSection(lang: lang, updater: updater)
             widgetsSection
             weatherSection
             stocksSection
@@ -92,13 +95,31 @@ struct SettingsView: View {
             Picker(lang.t(.recognitionSettings), selection: Binding(
                 get: { MusicRecognitionMode.resolve(recognitionMode).rawValue },
                 set: { newValue in
-                    // Leaving AudD stops anything in flight; nothing more is captured or sent.
-                    if MusicRecognitionMode.resolve(newValue) != .audd { audDRecognition.cancel() }
+                    // Leaving a method stops anything it has in flight; nothing more is captured or sent.
+                    let mode = MusicRecognitionMode.resolve(newValue)
+                    if mode != .audd { audDRecognition.cancel() }
+                    if mode != .songFinder { songFinder.cancel() }
                     recognitionMode = newValue
                 }
             )) {
+                Text(lang.t(.recognitionSongFinder)).tag(MusicRecognitionMode.songFinder.rawValue)
                 Text(lang.t(.recognitionSystem)).tag(MusicRecognitionMode.system.rawValue)
                 Text(lang.t(.recognitionThirdParty)).tag(MusicRecognitionMode.audd.rawValue)
+            }
+            if MusicRecognitionMode.resolve(recognitionMode) == .songFinder {
+                Text(lang.t(.sfSettingsDisclosure)).font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack {
+                    Text(lang.t(songFinder.consented ? .sfConsentGiven : .sfConsentNotGiven)).font(.caption)
+                    Spacer()
+                    if songFinder.consented {
+                        Button(lang.t(.sfWithdraw)) { songFinder.withdrawConsent() }
+                    }
+                }
+                HStack {
+                    Button(lang.t(.sfPrivacyPolicy)) { NSWorkspace.shared.open(SongFinderService.privacyURL) }
+                    Button(lang.t(.sfTerms)) { NSWorkspace.shared.open(SongFinderService.termsURL) }
+                }
             }
             if MusicRecognitionMode.resolve(recognitionMode) == .audd {
                 Button(lang.t(.audDSetup)) {

@@ -3,5 +3,5 @@
 "NSLocationUsageDescription" = "在你要求時，瀏海島會使用概略位置顯示當地天氣。";
 "NSLocationWhenInUseUsageDescription" = "在你要求時，瀏海島會使用概略位置顯示當地天氣。";
 "NSCalendarsFullAccessUsageDescription" = "瀏海島會讀取行事曆活動，以便在小工具中顯示即將到來的行程。";
-"NSAudioCaptureUsageDescription" = "瀏海島會在你開啟真實音量時使用這台 Mac 的聲音；在你選擇以 Mac 聲音進行 Shazam 辨識時使用（ShazamKit 會將音訊特徵傳給 Apple）；或只有在你選擇 AudD 時，錄下最多 10 秒並上傳到第三方服務 AudD。";
-"NSMicrophoneUsageDescription" = "瀏海島只在你選擇時使用麥克風：Shazam 最多 30 秒（不儲存音訊），或只有在你選擇 AudD 時，錄下最多 10 秒並上傳到第三方服務 AudD。";
+"NSAudioCaptureUsageDescription" = "瀏海島會在你開啟真實音量時使用這台 Mac 的聲音；並在你按下「音樂辨識」後用來辨識音樂：預設在你同意後，把約 12 秒上傳到第三方服務 Song Finder（songfinder.dev）；Shazam 會將音訊特徵傳給 Apple；只有在你選擇 AudD 時，才會把最多 10 秒傳給 AudD。";
+"NSMicrophoneUsageDescription" = "瀏海島只在你按下「音樂辨識」後使用麥克風：預設在你同意後，把約 12 秒上傳到第三方服務 Song Finder（songfinder.dev）；Shazam 最多 30 秒（不儲存）；或只有在你選擇 AudD 時，把最多 10 秒上傳到 AudD。";

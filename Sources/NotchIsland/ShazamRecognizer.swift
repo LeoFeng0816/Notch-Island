@@ -25,7 +25,7 @@ final class ShazamRecognizer: NSObject, ObservableObject {
 
     enum Source { case microphone, systemAudio }
 
-    static var supportsSystemAudio: Bool {
+    nonisolated static var supportsSystemAudio: Bool {
         if #available(macOS 14.2, *) { return true }
         return false
     }

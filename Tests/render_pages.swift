@@ -24,6 +24,29 @@ final class RenderMock: URLProtocol {
     func end() {}
 }
 
+/// Song Finder answers from `SongFinderRender.reply` (synthetic JSON; nothing leaves the Mac).
+final class SongFinderRender: URLProtocol {
+    nonisolated(unsafe) static var reply: (Int, String) = (200, "{}")
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        let (status, json) = Self.reply
+        client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(json.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
+}
+
+@MainActor final class TwoTones: AudDAudioSource {
+    var silentMac = false
+    func begin(_ source: ShazamRecognizer.Source, into clip: AudDClip) -> Bool {
+        let amplitude: Float = source == .systemAudio && silentMac ? 0 : 0.3
+        clip.append((0..<(13 * 16_000)).map { amplitude * sin(Float($0) * 0.17) }, rate: 16_000); return true
+    }
+    func end() {}
+}
+
 /// Answers every request with an error: the widget renders its offline state.
 final class OfflineHTTP: HTTPClient, @unchecked Sendable {
     func get(_ url: URL) async throws -> (Data, Int) { throw URLError(.notConnectedToInternet) }
@@ -58,6 +81,8 @@ final class OfflineHTTP: HTTPClient, @unchecked Sendable {
     let widgetSettings = WidgetSettings(defaults: defaults, secrets: MemorySecretStore())
     for kind in widgetSettings.order where widgetSettings.enabled.count < 4 { _ = widgetSettings.setEnabled(kind, true) }
     let battery = BatteryMonitor()
+    let songFinderSession = SongFinderService.makeSession(protocolClasses: [SongFinderRender.self])
+    let idleSongFinder = SongFinderRecognition(defaults: defaults, session: songFinderSession, audio: TwoTones())
     func widgetsPage() -> some View {
         VStack(spacing: 6) {
             WidgetsPage(model: model, lang: lang)
@@ -69,7 +94,7 @@ final class OfflineHTTP: HTTPClient, @unchecked Sendable {
         .environmentObject(model).environmentObject(widgetSettings).environmentObject(battery)
         .environmentObject(WidgetDataCenter(settings: widgetSettings, client: OfflineHTTP()))
         .environmentObject(CalendarStore(statusProvider: { .notDetermined })).environmentObject(LocationProvider())
-        .environmentObject(model.stopwatch).environmentObject(model.timer)
+        .environmentObject(model.stopwatch).environmentObject(model.timer).environmentObject(idleSongFinder)
     }
     for (language, code) in [(AppLanguage.english, "en"), (.traditionalChinese, "zh-Hant"), (.simplifiedChinese, "zh-Hans")] {
         lang.language = language
@@ -84,7 +109,42 @@ final class OfflineHTTP: HTTPClient, @unchecked Sendable {
         let toast = HStack { ToastLeading(toast: .init(symbol: "bolt.fill", text: "82%", style: .success)); Spacer(); ToastTrailing(toast: .init(symbol: "bolt.fill", text: "82%", style: .success)) }
             .padding(.horizontal, 10).frame(width: 185 + 2 * IslandViewModel.compactSideWidth, height: 32)
         render(toast, "\(code)-charging-toast", out: out, size: CGSize(width: 185 + 2 * IslandViewModel.compactSideWidth, height: 32))
-        render(QuickActionsBar(model: model, lang: lang), "\(code)-quick-actions", out: out)
+        render(QuickActionsBar(model: model, lang: lang).environmentObject(idleSongFinder), "\(code)-quick-actions", out: out)
+        // Song Finder: disclosure → recording → result / honest failures (synthetic tones, mocked answers).
+        func songFinderPage(_ r: SongFinderRecognition) -> some View {
+            SongFinderPage(model: model, lang: lang, recognition: r)
+                .frame(width: IslandViewModel.expandedWidth - 2 * IslandViewModel.widgetsHorizontalPadding, height: IslandViewModel.widgetsContentHeight - 52)
+        }
+        let size = CGSize(width: IslandViewModel.expandedWidth - 2 * IslandViewModel.widgetsHorizontalPadding, height: IslandViewModel.widgetsContentHeight - 52)
+        defaults.removeObject(forKey: MusicRecognitionMode.defaultsKey) // Song Finder is the default
+        defaults.removeObject(forKey: SongFinderService.consentKey)
+        let consent = SongFinderRecognition(defaults: defaults, session: songFinderSession, audio: TwoTones())
+        consent.start()
+        render(songFinderPage(consent), "\(code)-songfinder-consent", out: out, size: size)
+        defaults.set(SongFinderService.consentVersion, forKey: SongFinderService.consentKey)
+        let recording = SongFinderRecognition(defaults: defaults, session: songFinderSession, audio: TwoTones(), listenDuration: .seconds(30),
+                                              microphoneAccess: { true })
+        recording.start()
+        for _ in 0..<200 where recording.phase != .listening { try? await Task.sleep(for: .milliseconds(10)) }
+        render(songFinderPage(recording), "\(code)-songfinder-listening", out: out, size: size)
+        recording.cancel()
+        let results: [(String, (Int, String), Bool, Bool)] = [
+            ("matched", (200, #"{"code":0,"message":"ok","data":{"matched":true,"title":"A Deliberately Long Synthetic Test Tone Title That Keeps Going","artist":"Synthetic Artist With A Long Name","album":"Synthetic Album"}}"#), true, false),
+            ("no-match", (200, #"{"code":0,"message":"ok","data":{"matched":false}}"#), true, false),
+            ("rate-limited", (429, "{}"), true, false),
+            ("refused", (403, "{}"), true, false),
+            ("mic-denied-mac-silent", (200, #"{"code":0,"message":"ok","data":{"matched":false}}"#), false, true),
+        ]
+        for (name, reply, micAllowed, silentMac) in results {
+            SongFinderRender.reply = reply
+            let tones = TwoTones(); tones.silentMac = silentMac
+            let r = SongFinderRecognition(defaults: defaults, session: songFinderSession, audio: tones, listenDuration: .milliseconds(10),
+                                          microphoneAccess: { micAllowed })
+            r.start()
+            for _ in 0..<500 where r.phase.busy || r.phase == .idle { try? await Task.sleep(for: .milliseconds(10)) }
+            render(songFinderPage(r), "\(code)-songfinder-\(name)", out: out, size: size)
+        }
+        defaults.removeObject(forKey: SongFinderService.consentKey)
         let statuses: [(ControlCenterMedia.MusicRecognitionResult?, String)] = [(nil, "idle"), (.listening, "listening"), (.uncertain, "uncertain"),
                                                                               (.permissionNeeded, "needs-ax"), (.notInControlCenter, "missing"),
                                                                               (.menuBarNotExposed, "not-exposed"), (.unavailable, "unavailable")]

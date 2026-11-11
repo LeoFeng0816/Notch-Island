@@ -41,6 +41,10 @@ final class IslandController {
     let clipboard = ClipboardStore()
     let shazam = ShazamRecognizer()
     let audd = AudDRecognition()
+    /// Default music recognition (Song Finder); records only after the user's press.
+    let songFinder = SongFinderRecognition()
+    /// Manual "Check for Updates" against the GitHub release; never installs by itself.
+    let updater = SoftwareUpdateController()
     /// The app that was in front before the island was used — where a chosen
     /// clipboard item is pasted. The island never becomes frontmost itself.
     private var pasteTarget: NSRunningApplication?
@@ -160,7 +164,7 @@ final class IslandController {
             pasteTarget = front
         }
         if !expanded, shazam.isListening { shazam.cancel() } // never keep listening once the island is closed
-        if !expanded { audd.cancel() }
+        if !expanded { audd.cancel(); songFinder.cancel() } // nothing is recorded or sent once the island is closed
         hoverWork?.cancel(); hoverWork = nil
         collapseWork?.cancel(); collapseWork = nil
         model.isHovering = false
@@ -362,6 +366,12 @@ final class IslandController {
         onboardingWindow?.show()
     }
 
+    /// Menu bar › Check for Updates…: opens Settings and checks GitHub once.
+    func checkForUpdates() {
+        openSettings()
+        updater.checkNow()
+    }
+
     func openSettings() {
         setExpanded(false)
         if settingsWindow == nil {
@@ -370,6 +380,7 @@ final class IslandController {
                                      music: self.music, calendar: self.calendar, location: self.location,
                                      audioMonitor: self.audioMonitor, stockSearch: self.stockSearch,
                                      clipboard: self.clipboard, power: self.power, audDRecognition: self.audd,
+                                     songFinder: self.songFinder, updater: self.updater,
                                      useCurrentLocation: { [weak self] in self?.useCurrentLocationForWeather() },
                                      device: self.device,
                                      weatherProvider: OpenMeteoProvider(client: URLSessionHTTPClient()),
@@ -392,7 +403,7 @@ final class IslandController {
             let root = IslandRootView(model: model, timer: timer, music: music, lang: lang,
                                       stopwatch: stopwatch, battery: battery, data: widgetData, settings: widgetSettings,
                                       calendar: calendar, location: location, audioMonitor: audioMonitor,
-                                      clipboard: clipboard, shazam: shazam, audd: audd)
+                                      clipboard: clipboard, shazam: shazam, audd: audd, songFinder: songFinder)
             let hosting = FirstMouseHostingView(rootView: root)
             hosting.sizingOptions = []
             panel.contentView = hosting
@@ -446,14 +457,15 @@ final class IslandController {
 
         switch mode {
         case .expanded:
-            if pinExpanded || model.keepOpenContains(point) {
+            // While Song Finder records or sends (and briefly after), the island stays open: visible, cancellable, result not missed.
+            if pinExpanded || songFinder.keepsIslandOpen() || model.keepOpenContains(point) {
                 collapseWork?.cancel(); collapseWork = nil
             } else if collapseWork == nil {
                 let work = DispatchWorkItem { [weak self] in
                     MainActor.assumeIsolated {
                         guard let self else { return }
                         self.collapseWork = nil
-                        if !self.model.keepOpenContains(NSEvent.mouseLocation) {
+                        if !self.songFinder.keepsIslandOpen(), !self.model.keepOpenContains(NSEvent.mouseLocation) {
                             self.setExpanded(false)
                         }
                     }

@@ -4,16 +4,24 @@ import ShazamKit
 
 // MARK: - Quick actions under the widgets
 
-enum MusicRecognitionMode: String {
-    case system, audd
+enum MusicRecognitionMode: String, CaseIterable {
+    /// Song Finder (songfinder.dev): free, no key; asks for consent before the first upload.
+    case songFinder
+    /// macOS Control Center "Recognize Music" (results stay in Control Center).
+    case system
+    /// AudD with the user's own API token.
+    case audd
     static let defaultsKey = "NotchIsland.musicRecognitionMode"
-    static func resolve(_ value: String) -> Self { Self(rawValue: value) ?? .system }
+    /// Song Finder is the default, also for a missing or unknown value. An explicit,
+    /// stored choice (macOS or AudD) is kept. AudD is never chosen implicitly.
+    static func resolve(_ value: String) -> Self { Self(rawValue: value) ?? .songFinder }
 }
 
 struct QuickActionsBar: View {
     @ObservedObject var model: IslandViewModel
     @ObservedObject var lang: LanguageSettings
-    @AppStorage(MusicRecognitionMode.defaultsKey) private var recognitionMode = MusicRecognitionMode.system.rawValue
+    @EnvironmentObject private var songFinder: SongFinderRecognition
+    @AppStorage(MusicRecognitionMode.defaultsKey) private var recognitionMode = MusicRecognitionMode.songFinder.rawValue
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var recognitionFlash = false
 
@@ -48,7 +56,7 @@ struct QuickActionsBar: View {
     private var recognitionButton: some View {
         Button(action: recognizeMusic) {
             HStack(spacing: 5) {
-                Image(systemName: "shazam.logo.fill").font(.system(size: 11, weight: .semibold))
+                Image(systemName: "waveform.and.magnifyingglass").font(.system(size: 11, weight: .semibold))
                 Text(lang.t(.qaShazam)).font(.system(size: 10.5, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.7)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -66,9 +74,18 @@ struct QuickActionsBar: View {
     }
 
     private func recognizeMusic() {
-        guard MusicRecognitionMode.resolve(recognitionMode) == .system else {
+        switch MusicRecognitionMode.resolve(recognitionMode) {
+        case .songFinder:
+            // The press is the user's action: the first time this shows the disclosure
+            // (nothing is recorded until "Agree and Start"); afterwards it records ~12 s.
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { model.subpage = .songFinder }
+            songFinder.start()
+            return
+        case .audd:
             withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { model.subpage = .audd }
             return
+        case .system:
+            break
         }
         guard !model.checkingSystemRecognition else { return }
         // Blue while macOS is being tried; it fades out when the attempt ends

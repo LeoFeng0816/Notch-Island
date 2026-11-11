@@ -13,7 +13,8 @@ Turn your MacBook notch into a quick place for music, timers, and widgets. Notch
 - **Notch interaction:** click to expand immediately or hover for one second. When idle, the menu bar beside the notch stays clear.
 - **Music and activities:** see artwork, track details, and playback progress for supported sources; control playback and seeking. Countdowns and stopwatches appear while active.
 - **Widgets:** choose and arrange up to four widgets, including battery, weather, stocks, clock, calendar, timer, and stopwatch. Switch between activities and widgets when something is active.
-- **Quick actions:** clipboard history, screenshot to clipboard, screen recording, and music recognition.
+- **Quick actions:** clipboard history, screenshot to clipboard, screen recording, and music recognition (Song Finder by default).
+- **Software update:** check GitHub for the latest release on demand, verify the download's SHA-256, and follow a guided install.
 - **Power alerts:** see charging status when power is connected and a low-battery reminder with a shortcut to macOS Battery settings.
 
 ## Installation
@@ -34,13 +35,16 @@ The app is ad-hoc signed and **not notarized by Apple**. Only if you trust the d
 - **Widgets:** select, reorder, or disable widgets in settings; up to four can be shown at once. Weather can use your current location, and stocks can be searched by company or ticker.
 - **Clipboard:** choose whether to keep history and for how long. Select an item to copy it; automatic paste can be attempted after granting permission to send keystrokes.
 - **Screenshots and recording:** screenshots are copied to the clipboard. Recording opens the native macOS recording toolbar, where you start the recording.
-- **Music recognition:** choose macOS Recognize Music or third-party AudD in settings. Follow the Control Center and Accessibility instructions for macOS recognition; for AudD, first provide your key and consent in settings.
+- **Music recognition:** uses [Song Finder](https://songfinder.dev) by default, with no account or API key. The first press explains where the audio goes and asks for your consent. A match shows the title and artist, with **Google Search** (artist and title prefilled) and **Copy** (“Artist - Title”). “No match” is shown only when Song Finder says nothing matched; permissions, connectivity, timeouts, rate limits and server errors are reported separately. In settings you can switch to macOS Recognize Music (results stay in Control Center) or AudD (your own API token).
+- **Software update:** use **Check for Updates…** in the menu bar or **Settings › Software Update**. If a newer stable release exists, its version and notes are shown and you can **Download and Verify**: the file's size and SHA-256 must match what GitHub lists, it is saved to Downloads, and macOS's quarantine flag is kept. The app never installs or replaces itself. Use **Back Up Current App** first, then follow the on-screen steps to drag it into Applications (choose **Keep Both** to keep the old copy too). Settings, clipboard history and Keychain items are kept; permissions may need to be granted again. A matching checksum only shows the file is the one attached to the GitHub release; it is not Apple verification. New versions are also unnotarized, so allow them as described in Installation.
 
 ## Privacy and permissions
 
-System permissions support the features you choose. The app has no feature that uploads private data to a Notch Island-owned server. Clipboard history is stored locally, and calendar data is not transmitted by the app.
+Notch Island has no servers of its own. System permissions support the features you choose; clipboard history is stored locally, and calendar data is not transmitted by the app.
 
-Optional online features send the necessary data to their providers: weather sends a city or approximate location to Open-Meteo, and stocks send ticker queries to the quote provider. AudD requires your own API key and explicit consent before you start and send a short audio sample. Keys are stored in the macOS Keychain. Apple's music recognition services operate under Apple's privacy terms.
+**Music recognition (Song Finder, the default) sends audio off this Mac.** The first time you press Music Recognition, a disclosure is shown and nothing is recorded until you agree. After that, each press records about 12 seconds from the microphone and this Mac's sound output (each only if available and allowed by macOS), mixes them into one clip in memory, uploads it once over HTTPS to the third-party service Song Finder (songfinder.dev), and then discards it; nothing is written to disk. The clip contains anything audible, such as nearby voices. According to Song Finder's [privacy policy](https://songfinder.dev/privacy-policy) (updated 2026-08-25), the clip goes to its configured recognition providers (currently ACRCloud, AudioTag and Shazam) and is not retained after recognition; that is Song Finder's statement, which Notch Island cannot verify. Recording and uploading stop when the island closes. You can withdraw consent or choose another method in settings.
+
+Other optional online features: weather sends a city or approximate location to Open-Meteo, and stocks send ticker queries to the quote provider. AudD uploads up to 10 seconds of audio only with your own API key and consent; keys are stored in the macOS Keychain. macOS Recognize Music runs in Control Center under Apple's privacy terms. Checking for updates contacts api.github.com only when you click, and downloads come from GitHub's release files.
 
 When relevant, the app explains permissions for Accessibility, screen and system audio recording, microphone, location, calendar, or Automation. macOS may require permissions to be granted again after updating an ad-hoc build.
 

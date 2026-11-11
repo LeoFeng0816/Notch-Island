@@ -75,30 +75,7 @@ enum AudDService {
         guard (8_000...192_000).contains(rate),
               (minimumSeconds * rate...captureSeconds * rate).contains(samples.count),
               samples.contains(where: { $0.isFinite && abs($0) >= 0.001 }) else { return nil }
-        let byteCount = samples.count * MemoryLayout<Int16>.size
-        var data = Data(capacity: 44 + byteCount)
-        data.append(contentsOf: "RIFF".utf8)
-        func append<T: FixedWidthInteger>(_ number: T) {
-            var value = number.littleEndian
-            withUnsafeBytes(of: &value) { data.append(contentsOf: $0) }
-        }
-        append(UInt32(36 + byteCount))
-        data.append(contentsOf: "WAVEfmt ".utf8)
-        append(UInt32(16))      // PCM fmt chunk length
-        append(UInt16(1))       // PCM
-        append(UInt16(1))       // mono
-        append(UInt32(rate))
-        append(UInt32(rate * 2))
-        append(UInt16(2))       // bytes per frame
-        append(UInt16(16))
-        data.append(contentsOf: "data".utf8)
-        append(UInt32(byteCount))
-        let pcm = samples.map { sample -> Int16 in
-            guard sample.isFinite else { return 0 }
-            return Int16((min(1, max(-1, sample)) * Float(Int16.max)).rounded()).littleEndian
-        }
-        pcm.withUnsafeBytes { data.append(contentsOf: $0) }
-        return data
+        return PCMWave.encode(samples, rate: rate)
     }
 
     static func makeRequest(wav: Data, token: String, boundary: String = UUID().uuidString) -> URLRequest {

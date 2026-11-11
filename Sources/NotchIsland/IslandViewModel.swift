@@ -15,7 +15,7 @@ enum IslandMode: Equatable {
 /// only real live activities (timer, stopwatch, music) do.
 /// Full-area pages opened from the quick actions under the widgets.
 enum IslandSubpage: Equatable {
-    case none, clipboard, audd
+    case none, clipboard, audd, songFinder
     case shazam(ControlCenterMedia.MusicRecognitionResult)
 }
 
