@@ -14,7 +14,10 @@ enum IslandMode: Equatable {
 /// What the expanded island shows. Widgets never widen the menu-bar part:
 /// only real live activities (timer, stopwatch, music) do.
 /// Full-area pages opened from the quick actions under the widgets.
-enum IslandSubpage: Equatable { case none, clipboard, shazam }
+enum IslandSubpage: Equatable {
+    case none, clipboard, audd
+    case shazam(ControlCenterMedia.MusicRecognitionResult)
+}
 
 /// Short result shown in the notch for a moment (screenshot, paste, recording…).
 struct IslandToast: Equatable {
@@ -22,6 +25,8 @@ struct IslandToast: Equatable {
     var symbol: String
     var text: String
     var style: Style
+    /// Spoken instead of `text` when the text alone is terse (e.g. "82%").
+    var accessibilityText: String? = nil
 }
 
 enum ExpandedPage: String, CaseIterable, Identifiable {
@@ -45,8 +50,17 @@ final class IslandViewModel: ObservableObject {
     @Published var page: ExpandedPage = .widgets
     @Published var activityTool: ActivityTool = .timer
     @Published var subpage: IslandSubpage = .none
+    @Published private(set) var checkingSystemRecognition = false
     @Published private(set) var toast: IslandToast?
     private var toastWork: DispatchWorkItem?
+    /// Small card below the notch (low battery). Never shown over the expanded panel.
+    @Published private(set) var banner: IslandBanner?
+    private var pendingBanner: IslandBanner?
+    private var bannerWork: DispatchWorkItem?
+    /// Set by the controller while the pointer rests on the banner (keeps it up).
+    var pointerOnBanner = false
+    /// "Reduce motion" (System Settings › Accessibility › Display); injectable for tests.
+    var reduceMotion: () -> Bool = { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
 
     // Quick actions (set by the controller).
     var onScreenshot: (() -> Void)?
@@ -63,7 +77,15 @@ final class IslandViewModel: ObservableObject {
     private var cancellables: Set<AnyCancellable> = []
 
     static let compactSideWidth: CGFloat = 64
-    static let expandedWidth: CGFloat = 580
+    /// 0.1.1: 20 pt shorter than 0.1.0 (580). The widget page's padding and
+    /// card spacing shrink by the same amount, so four cards keep their
+    /// 127 pt size (see `widgetCardSide`).
+    static let expandedWidth: CGFloat = 560
+    /// Horizontal padding of the widget page and spacing between its cards.
+    static let widgetsHorizontalPadding: CGFloat = 13
+    static let widgetCardSpacing: CGFloat = 8
+    static let bannerWidth: CGFloat = 360
+    static let bannerHeight: CGFloat = 58
     static let expandedContentHeight: CGFloat = 170
     /// The widget page is a little taller so cards can be iOS-style squares.
     /// Widget cards plus the quick-action row (Clipboard, Screenshot, Record, Shazam).
@@ -97,6 +119,9 @@ final class IslandViewModel: ObservableObject {
         guard isExpanded != expanded else { return }
         if expanded {
             subpage = .none
+            // The user opened the island: the banner's message is in the battery widget too.
+            bannerWork?.cancel(); bannerWork = nil
+            banner = nil
             // Live activities first when there are any; otherwise the widget area.
             page = hasLiveActivity ? .activities : .widgets
             if stopwatch.isActive && !timer.isActive { activityTool = .stopwatch }
@@ -104,6 +129,28 @@ final class IslandViewModel: ObservableObject {
         }
         isExpanded = expanded
         updateMode()
+        if !expanded, let pending = pendingBanner {
+            pendingBanner = nil
+            showBanner(pending)
+        }
+    }
+
+    func startSystemRecognition(feedbackDuration: Duration,
+                                run: @escaping @Sendable () -> ControlCenterMedia.MusicRecognitionResult = {
+                                    ControlCenterMedia.startMusicRecognition()
+                                }) {
+        guard !checkingSystemRecognition else { return }
+        checkingSystemRecognition = true
+        Task {
+            let feedbackEnd = ContinuousClock.now + feedbackDuration
+            let result = await Task.detached(priority: .userInitiated) {
+                run()
+            }.value
+            try? await Task.sleep(until: feedbackEnd, clock: .continuous)
+            checkingSystemRecognition = false
+            guard result != .listening, isExpanded, page == .widgets, subpage == .none else { return }
+            subpage = .shazam(result)
+        }
     }
 
     /// Tools shown on the Live Activities page: only running/paused/finished ones.
@@ -133,15 +180,54 @@ final class IslandViewModel: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + duration, execute: work)
     }
 
+    /// Shows the banner for a while (longer while the pointer rests on it).
+    /// Arriving while expanded, it waits until the island collapses.
+    func showBanner(_ new: IslandBanner, duration: TimeInterval = 9) {
+        guard !isExpanded else { pendingBanner = new; return }
+        bannerWork?.cancel()
+        withAnimation(modeAnimation(expanding: false)) { banner = new }
+        updateMode()
+        scheduleBannerDismissal(after: duration)
+    }
+
+    private func scheduleBannerDismissal(after delay: TimeInterval) {
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if self.pointerOnBanner { self.scheduleBannerDismissal(after: 2); return }
+                self.dismissBanner()
+            }
+        }
+        bannerWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    func dismissBanner() {
+        bannerWork?.cancel(); bannerWork = nil
+        pendingBanner = nil
+        guard banner != nil else { return }
+        withAnimation(modeAnimation(expanding: false)) { banner = nil }
+        pointerOnBanner = false
+        updateMode()
+    }
+
     private func updateMode() {
-        let active = hasLiveActivity || toast != nil
+        let active = hasLiveActivity || toast != nil || banner != nil
         let newMode: IslandMode = isExpanded ? .expanded : (active ? .compact : .idle)
         guard newMode != mode || active != isActive else { return }
-        withAnimation(newMode == .expanded ? Self.expandAnimation : Self.collapseAnimation) {
+        withAnimation(modeAnimation(expanding: newMode == .expanded)) {
             isActive = active
             mode = newMode
         }
     }
+
+    /// Springs normally; a short fade-like ease when Reduce Motion is on.
+    func modeAnimation(expanding: Bool) -> Animation {
+        if reduceMotion() { return Self.reducedMotionAnimation }
+        return expanding ? Self.expandAnimation : Self.collapseAnimation
+    }
+
+    static let reducedMotionAnimation = Animation.easeInOut(duration: 0.16)
 
     static let expandAnimation = Animation.spring(response: 0.42, dampingFraction: 0.8)
     static let collapseAnimation = Animation.spring(response: 0.34, dampingFraction: 0.92)
@@ -170,11 +256,16 @@ final class IslandViewModel: ObservableObject {
         neckWidth(for: .expanded, hovering: false) > 0 ? menuBarHeight : menuBarHeight + Self.floatingGap
     }
 
-    func shapeParams(for mode: IslandMode, hovering: Bool) -> IslandShapeParams {
+    func shapeParams(for mode: IslandMode, hovering: Bool, includeBanner: Bool = true) -> IslandShapeParams {
         let neck = neckWidth(for: mode, hovering: hovering)
         // The top flare only exists when indicators widen the neck past the notch.
         let flare: CGFloat = neck > geometry.notchSize.width ? 6 : 0
         switch mode {
+        case .compact where includeBanner && banner != nil:
+            // Banner: a short body below the menu bar, like a small expanded panel.
+            return IslandShapeParams(neckWidth: neck, neckHeight: menuBarHeight + (hovering ? Self.hoverGrowth : 0),
+                                     neckRadius: 11, flare: flare, bodyWidth: Self.bannerWidth, bodyTop: bodyTop,
+                                     height: bodyTop + Self.bannerHeight, bodyRadius: 22)
         case .idle, .compact:
             // Zero-height body parked at the menu bar line, as wide as the neck,
             // so expanding grows it straight down from there.
@@ -245,7 +336,8 @@ final class IslandViewModel: ObservableObject {
         strip.size.height += 0.5 // touch the notch without a gap
         switch mode {
         case .idle: return notch.contains(point) || strip.contains(point)
-        case .compact: return shapeContains(point, mode: .compact) || strip.contains(point)
+        // The banner body is not an expand target: its buttons must stay clickable.
+        case .compact: return shapeContains(point, mode: .compact, includeBanner: false) || strip.contains(point)
         case .expanded: return false
         }
     }
@@ -256,7 +348,7 @@ final class IslandViewModel: ObservableObject {
     func activationZoneContains(_ point: NSPoint) -> Bool {
         if activationContains(point, mode: .idle) { return true }
         guard isActive else { return false }
-        let compact = shapeParams(for: .compact, hovering: true)
+        let compact = shapeParams(for: .compact, hovering: true, includeBanner: false)
         let path = IslandShape(p: compact).path(in: CGRect(origin: .zero, size: windowSize))
         return path.contains(localPoint(point))
     }
@@ -264,12 +356,27 @@ final class IslandViewModel: ObservableObject {
     /// Whether the panel should take mouse events at `point` (otherwise clicks
     /// pass through to the menu bar / windows below).
     func acceptsMouse(at point: NSPoint) -> Bool {
-        mode == .expanded ? shapeContains(point) : activationContains(point)
+        mode == .expanded ? shapeContains(point) : (activationContains(point) || bannerContains(point))
     }
 
-    func shapeContains(_ screenPoint: NSPoint, mode: IslandMode? = nil) -> Bool {
+    /// The banner card (screen coordinates), when one is shown.
+    func bannerContains(_ screenPoint: NSPoint) -> Bool {
+        guard banner != nil, mode == .compact else { return false }
+        let size = windowSize
+        let card = CGRect(x: (size.width - Self.bannerWidth) / 2, y: bodyTop, width: Self.bannerWidth, height: Self.bannerHeight)
+        return card.contains(localPoint(screenPoint))
+    }
+
+    /// Edge of each widget card for `count` cards in the expanded page (layout check).
+    static func widgetCardSide(count: Int, rowHeight: CGFloat) -> CGFloat {
+        let n = CGFloat(max(1, count))
+        let width = expandedWidth - 2 * widgetsHorizontalPadding
+        return floor(min(rowHeight, (width - widgetCardSpacing * (n - 1)) / n))
+    }
+
+    func shapeContains(_ screenPoint: NSPoint, mode: IslandMode? = nil, includeBanner: Bool = true) -> Bool {
         let mode = mode ?? self.mode
-        let params = shapeParams(for: mode, hovering: isHovering && mode != .expanded)
+        let params = shapeParams(for: mode, hovering: isHovering && mode != .expanded, includeBanner: includeBanner)
         let path = IslandShape(p: params).path(in: CGRect(origin: .zero, size: windowSize))
         return path.contains(localPoint(screenPoint))
     }

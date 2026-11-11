@@ -10,11 +10,15 @@ enum ControlCenterMedia {
     enum MusicRecognitionResult: Equatable {
         /// Control Center shows its own "Listening…" state.
         case listening
-        /// We pressed Recognize Music / Start Listening but couldn't read a listening state.
+        /// An AX request may have been delivered, but listening could not be confirmed.
         case uncertain
         case permissionNeeded
-        /// No Recognize Music control in Control Center (add it under Edit Controls).
+        /// Could not find the Recognize Music control in the opened window.
         case notInControlCenter
+        /// Control Center publishes no menu-bar items to Accessibility, so
+        /// there is nothing to press. Measured on macOS 27.0.1 (unlocked):
+        /// `AXExtrasMenuBar` and `AXMenuBar` return kAXErrorNoValue (-25212).
+        case menuBarNotExposed
         case unavailable
     }
 
@@ -23,6 +27,7 @@ enum ControlCenterMedia {
         let names: [String]
         let pressable: Bool
         var children: [Node<Element>] = []
+        var value: String?
 
         func matches(_ labels: Set<String>) -> Bool {
             names.contains { labels.contains($0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()) }
@@ -73,14 +78,13 @@ enum ControlCenterMedia {
         _ = AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
     }
 
-    // Identifiers below are literal strings inside macOS 27's ControlCenter binary.
+    // Match these identifiers only when macOS exposes them through public AX attributes.
     static let musicModule: Set<String> = ["controlcenter-musicrecognition", "com.apple.controlcenter.musicrecognition"]
     static let musicMenu: Set<String> = ["com.apple.menuextra.musicrecognition"]
-    static let musicPanel: Set<String> = ["musicrecognition-header", "musicrecognition-history"]
+    private static let musicHeader: Set<String> = ["musicrecognition-header"]
+    private static let musicHistory: Set<String> = ["musicrecognition-history"]
 
-    /// Labels of the panel's "Start Listening" button and "Listening…" state,
-    /// read from Control Center's own MusicRecognition.loctable (all languages),
-    /// plus the English/Chinese values as a fallback.
+    /// Visible button and status labels in the app's supported languages.
     struct MusicLabels: Equatable {
         var start: Set<String>
         var listening: Set<String>
@@ -88,24 +92,6 @@ enum ControlCenterMedia {
         static let builtIn = MusicLabels(
             start: ["start listening", "開始聆聽", "开始听取"].reduce(into: Set<String>()) { $0.insert(normalize($1)) },
             listening: ["Listening…", "聆聽中⋯", "正在听取…", "正在聆聽⋯"].reduce(into: Set<String>()) { $0.insert(normalize($1)) })
-
-        static let loctable = URL(fileURLWithPath: "/System/Library/CoreServices/ControlCenter.app/Contents/Resources/MusicRecognition.loctable")
-
-        /// Parses a loctable: `[locale: [key: value]]`.
-        static func from(loctable data: Data) -> MusicLabels? {
-            guard let table = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else { return nil }
-            var labels = MusicLabels(start: [], listening: [])
-            for case let strings as [String: Any] in table.values {
-                if let value = strings["Start Listening"] as? String { labels.start.insert(normalize(value)) }
-                if let value = strings["Listening…"] as? String { labels.listening.insert(normalize(value)) }
-            }
-            return labels.start.isEmpty || labels.listening.isEmpty ? nil : labels
-        }
-
-        static let system: MusicLabels = {
-            guard let data = try? Data(contentsOf: loctable), let parsed = from(loctable: data) else { return builtIn }
-            return MusicLabels(start: parsed.start.union(builtIn.start), listening: parsed.listening.union(builtIn.listening))
-        }()
 
         /// Case-insensitive; "…", "⋯" and "..." compare equal.
         static func normalize(_ text: String) -> String {
@@ -125,24 +111,27 @@ enum ControlCenterMedia {
 
     /// Pure decision over a Control Center AX snapshot. Only acts on a single,
     /// identified control; several candidates mean "don't press anything".
-    static func musicStep<Element>(in windows: [Node<Element>], labels: MusicLabels = .system) -> MusicStep<Element> {
-        func all(_ nodes: [Node<Element>]) -> [Node<Element>] { nodes.flatMap { [$0] + all($0.children) } }
-        let nodes = all(windows)
+    static func musicStep<Element>(in windows: [Node<Element>], labels: MusicLabels = .builtIn) -> MusicStep<Element> {
+        func all(_ nodes: [Node<Element>]) -> [Node<Element>] {
+            nodes.flatMap { $0.matches(musicHistory) ? [] : [$0] + all($0.children) }
+        }
         func named(_ node: Node<Element>, _ set: Set<String>) -> Bool {
             node.names.contains { set.contains(MusicLabels.normalize($0)) }
         }
-        if nodes.contains(where: { named($0, labels.listening) }) { return .listening }
-        func panelNodes(_ node: Node<Element>, inside: Bool) -> [Node<Element>] {
-            let isPanel = inside || node.matches(musicPanel) || node.names.contains { $0.lowercased().hasPrefix("musicrecognition-") }
-            return (isPanel ? [node] : []) + node.children.flatMap { panelNodes($0, inside: isPanel) }
-        }
         // The header id is the panel's own; its parent window holds the button.
-        let panelWindows = windows.filter { window in all([window]).contains { $0.matches(musicPanel) } }
-        let scope = panelWindows.isEmpty ? windows.flatMap { panelNodes($0, inside: false) } : all(panelWindows)
-        let starts = scope.filter { $0.pressable && named($0, labels.start) }
-        if starts.count == 1 { return .pressStart(starts[0].element) }
-        if !panelWindows.isEmpty || !scope.isEmpty { return .panelOpen }
-        let modules = nodes.filter { $0.pressable && $0.matches(musicModule) }
+        let trees = windows.map { all([$0]) }
+        let panels = trees.filter { $0.contains { $0.matches(musicHeader) } }
+        if let panel = panels.first {
+            guard panels.count == 1 else { return .panelOpen }
+            let headers = panel.filter { $0.matches(musicHeader) }
+            guard headers.count == 1 else { return .panelOpen }
+            if all(headers).contains(where: {
+                named($0, labels.listening) || $0.value.map { labels.listening.contains(MusicLabels.normalize($0)) } == true
+            }) { return .listening }
+            let starts = panel.filter { $0.pressable && named($0, labels.start) }
+            return starts.count == 1 ? .pressStart(starts[0].element) : .panelOpen
+        }
+        let modules = trees.flatMap { $0 }.filter { $0.pressable && $0.matches(musicModule) }
         if modules.count == 1 { return .pressModule(modules[0].element) }
         return .nothing
     }
@@ -150,7 +139,7 @@ enum ControlCenterMedia {
     /// Presses Control Center's own Recognize Music for the user. Called only
     /// from the user's button; macOS does the listening and shows the result.
     /// Uses AX identifiers/labels only — never screen coordinates.
-    static func startMusicRecognition(labels: MusicLabels = .system) -> MusicRecognitionResult {
+    static func startMusicRecognition(labels: MusicLabels = .builtIn) -> MusicRecognitionResult {
         guard hasAccess else { return .permissionNeeded }
         guard let process = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.controlcenter").first
         else { return .unavailable }
@@ -158,21 +147,30 @@ enum ControlCenterMedia {
         let client = Client(deadline: ProcessInfo.processInfo.systemUptime + 3)
         let actionable = musicModule.union(musicMenu).union(controlCenter).union(labels.start)
         func snapshot() -> [Node<AXUIElement>] { client.tree(client.windows(app), maxDepth: 14, maxNodes: 600, actionableLabels: actionable) }
+        func press(_ element: AXUIElement) -> MusicRecognitionResult? {
+            switch client.action(kAXPressAction, on: element) {
+            case .success: return nil
+            case .cannotComplete, .failure: return .uncertain
+            default: return .unavailable
+            }
+        }
 
         var pressedModule = false, pressedStart = false, openedMenu = false, pressedPinned = false
+        var sawOpenedWindow = false
         while client.remaining > 0 {
             let nodes = snapshot()
+            if openedMenu && !nodes.isEmpty { sawOpenedWindow = true }
             switch musicStep(in: nodes, labels: labels) {
             case .listening:
                 return .listening
             case .pressStart(let button):
                 if !pressedStart {
-                    guard client.action(kAXPressAction, on: button) == .success else { return .unavailable }
+                    if let failure = press(button) { return failure }
                     pressedStart = true
                 }
             case .pressModule(let module):
-                if !pressedModule {
-                    guard client.action(kAXPressAction, on: module) == .success else { return .unavailable }
+                if !pressedModule && !pressedStart && !pressedPinned {
+                    if let failure = press(module) { return failure }
                     pressedModule = true
                 }
             case .panelOpen:
@@ -180,14 +178,15 @@ enum ControlCenterMedia {
             case .nothing:
                 // Something the user opened (e.g. another menu-bar popover) without our
                 // control in it: leave it alone rather than toggling Control Center.
-                if !openedMenu && !nodes.isEmpty { return .unavailable }
-                if !openedMenu {
+                if !openedMenu && !pressedModule && !pressedStart {
+                    if !nodes.isEmpty { return .unavailable }
                     openedMenu = true
                     let menu = client.elements(app, kAXExtrasMenuBarAttribute) + client.elements(app, kAXMenuBarAttribute)
+                    if menu.isEmpty { return .menuBarNotExposed }
                     let entries = client.tree(menu, maxDepth: 4, actionableLabels: actionable)
                     let pinned = client.unique(musicMenu, in: entries)
-                    guard let entry = pinned ?? client.unique(controlCenter, in: entries),
-                          client.action(kAXPressAction, on: entry) == .success else { return .unavailable }
+                    guard let entry = pinned ?? client.unique(controlCenter, in: entries) else { return .unavailable }
+                    if let failure = press(entry) { return failure }
                     pressedPinned = pinned != nil
                 }
             }
@@ -195,7 +194,7 @@ enum ControlCenterMedia {
             if wait > 0 { Thread.sleep(forTimeInterval: wait) }
         }
         if pressedStart || pressedModule || pressedPinned { return .uncertain }
-        return openedMenu ? .notInControlCenter : .unavailable
+        return sawOpenedWindow ? .notInControlCenter : .unavailable
     }
 
     /// Run on a worker queue: AX requests are synchronous cross-process calls.
@@ -282,14 +281,14 @@ enum ControlCenterMedia {
                       let values = response as? [Any], values.count == attributes.count else { return nil }
                 // AXValue of static text carries states such as "Listening…". It is
                 // matched against known labels only; nothing is stored or logged.
-                let names = (Array(values.prefix(4)) + [values[6]]).compactMap { $0 as? String }
+                let names = values.prefix(4).compactMap { $0 as? String }
                 let enabled = values[4] as? Bool ?? true
                 let actionable = names.contains {
                     actionableLabels.contains($0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
                 }
                 let pressable = enabled && actionable && actions(element).contains(kAXPressAction)
                 let children = (values[5] as? [AXUIElement] ?? []).compactMap { visit($0, depth: depth + 1) }
-                return Node(element: element, names: names, pressable: pressable, children: children)
+                return Node(element: element, names: names, pressable: pressable, children: children, value: values[6] as? String)
             }
             return roots.compactMap { visit($0, depth: 0) }
         }

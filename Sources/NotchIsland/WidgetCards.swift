@@ -12,7 +12,7 @@ struct WidgetsPage: View {
     @ObservedObject var lang: LanguageSettings
     @EnvironmentObject var settings: WidgetSettings
 
-    static let spacing: CGFloat = 10
+    static let spacing: CGFloat = IslandViewModel.widgetCardSpacing
 
     var body: some View {
         let kinds = settings.enabledInOrder

@@ -72,8 +72,17 @@ final class ShazamRecognizer: NSObject, ObservableObject {
 
     enum ShortcutPhase: Equatable {
         case idle, running, finished, failed
+        /// `shortcuts` reported "Couldn’t find shortcut" for the typed name.
+        case notFound
+        /// Stopped by the user from the island, or after `shortcutTimeout`.
+        case stopped, timedOut
         case result(String)
     }
+
+    /// A Shazam shortcut normally ends within ~15 s; never leave one running unseen.
+    static let shortcutTimeout: TimeInterval = 90
+    private var shortcutProcess: Process?
+    private var shortcutRun = 0
 
     static let timeout: TimeInterval = 30
 
@@ -154,31 +163,77 @@ final class ShazamRecognizer: NSObject, ObservableObject {
         guard !name.isEmpty else { return }
         let process = Process()
         let output = Pipe()
+        let errors = Pipe()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/shortcuts")
         process.arguments = ["run", "--output-type", "public.utf8-plain-text", "--", name]
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
+        // Only read to tell "no such shortcut" apart; never stored or logged.
+        process.standardError = errors
+        shortcutRun += 1
+        let run = shortcutRun
         do {
             try process.run()
+            shortcutProcess = process
             shortcutPhase = .running
         } catch {
             shortcutPhase = .failed
             return
         }
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.shortcutTimeout) { [weak self] in
+            guard let self, self.shortcutRun == run, self.shortcutPhase == .running else { return }
+            self.stopShortcut(as: .timedOut)
+        }
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            var text = Data()
-            while let chunk = try? output.fileHandleForReading.read(upToCount: 4096), !chunk.isEmpty {
-                text.append(contentsOf: chunk.prefix(1024 - text.count))
+            // Drain both pipes at once so neither can fill up and block the shortcut.
+            final class Box: @unchecked Sendable { var data = Data() } // written once, read after `wait()`
+            let errorText = Box()
+            let group = DispatchGroup()
+            group.enter()
+            DispatchQueue.global(qos: .utility).async {
+                errorText.data = Self.readBounded(errors.fileHandleForReading, limit: 2048)
+                group.leave()
             }
+            let text = Self.readBounded(output.fileHandleForReading, limit: 1024)
+            group.wait()
             process.waitUntilExit()
             let status = Self.shortcutOutcome(status: process.terminationStatus,
-                                              reason: process.terminationReason, output: text)
-            DispatchQueue.main.async { [weak self] in self?.shortcutPhase = status }
+                                              reason: process.terminationReason, output: text, errorOutput: errorText.data)
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.shortcutRun == run else { return }
+                self.shortcutProcess = nil
+                // A stop/timeout already set the phase; keep it.
+                if self.shortcutPhase == .running { self.shortcutPhase = status }
+            }
         }
     }
 
-    nonisolated static func shortcutOutcome(status: Int32, reason: Process.TerminationReason, output: Data) -> ShortcutPhase {
+    /// The user's "Stop" in the island (also used by the time limit).
+    func stopShortcut(as phase: ShortcutPhase = .stopped) {
+        guard shortcutPhase == .running else { return }
+        shortcutPhase = phase
+        if let process = shortcutProcess, process.isRunning { process.terminate() }
+        shortcutProcess = nil
+    }
+
+    private nonisolated static func readBounded(_ handle: FileHandle, limit: Int) -> Data {
+        var data = Data()
+        while let chunk = try? handle.read(upToCount: 4096), !chunk.isEmpty {
+            if data.count < limit { data.append(contentsOf: chunk.prefix(limit - data.count)) }
+        }
+        return data
+    }
+
+    /// Exact phrase `/usr/bin/shortcuts` prints on macOS 27 for an unknown name
+    /// ("Error: The operation couldn’t be completed. Couldn’t find shortcut").
+    nonisolated static func isShortcutNotFound(_ errorOutput: Data) -> Bool {
+        let text = String(decoding: errorOutput, as: UTF8.self).replacingOccurrences(of: "’", with: "'").lowercased()
+        return text.contains("couldn't find shortcut")
+    }
+
+    nonisolated static func shortcutOutcome(status: Int32, reason: Process.TerminationReason, output: Data,
+                                            errorOutput: Data = Data()) -> ShortcutPhase {
+        if reason == .exit, status != 0, isShortcutNotFound(errorOutput) { return .notFound }
         guard reason == .exit, status == 0 else { return .failed }
         let text = String(decoding: output, as: UTF8.self).unicodeScalars
             .filter { !CharacterSet.controlCharacters.contains($0) || $0 == "\n" || $0 == "\t" }

@@ -67,6 +67,61 @@ let quoteJSON = Data("""
 """.utf8)
 let taipei = Place(name: "Taipei", admin: nil, country: "Taiwan", latitude: 25.05, longitude: 121.53, timezone: "Asia/Taipei")
 
+await test("music recognition: system default and explicit third-party choice") {
+    expect(MusicRecognitionMode.resolve("system") == .system, "system option invokes the system path")
+    expect(MusicRecognitionMode.resolve("audd") == .audd, "third-party option opens AudD")
+    expect(MusicRecognitionMode.resolve("") == .system, "missing preference defaults to system")
+    expect(MusicRecognitionMode.resolve("unknown") == .system, "unknown preference cannot silently choose third-party")
+    let lang = LanguageSettings.shared
+    let saved = lang.language
+    defer { lang.language = saved }
+    lang.language = .traditionalChinese
+    expect(lang.t(.qaShazam) == "音樂辨識", "Traditional Chinese quick action")
+    lang.language = .simplifiedChinese
+    expect(lang.t(.qaShazam) == "音乐识别", "Simplified Chinese quick action")
+    lang.language = .english
+    expect(lang.t(.qaShazam) == "Music Recognition", "English quick action")
+}
+
+await test("music recognition: quick action feedback, guidance never jumps to AudD, honest labels") {
+    // Blue only fades (opacity); Reduce Motion keeps a short dissolve rather than snapping.
+    expect(QuickActionsBar.flashFade(fadingIn: true, reduceMotion: true) > 0 && QuickActionsBar.flashFade(fadingIn: false, reduceMotion: true) > 0,
+           "reduce motion still dissolves, never snaps")
+    expect(QuickActionsBar.flashFade(fadingIn: true, reduceMotion: true) <= QuickActionsBar.flashFade(fadingIn: true, reduceMotion: false)
+           && QuickActionsBar.flashFade(fadingIn: false, reduceMotion: true) < QuickActionsBar.flashFade(fadingIn: false, reduceMotion: false),
+           "reduce motion shortens the fades")
+    expect(QuickActionsBar.feedbackDuration(reduceMotion: true) < QuickActionsBar.feedbackDuration(reduceMotion: false), "shorter hold with reduce motion")
+    expect(QuickActionsBar.recognitionBlue == 0x0058BD, "Shazam-style blue")
+    let page = try String(contentsOfFile: "Sources/NotchIsland/IslandPages.swift", encoding: .utf8)
+    let bar = page.components(separatedBy: "struct QuickActionsBar")[1].components(separatedBy: "struct SubpageHeader")[0]
+    expect(!bar.contains("scaleEffect") && !bar.contains("offset("), "the button flash has no movement")
+    expect(bar.contains("model.startSystemRecognition") && bar.contains("model.subpage = .audd"),
+           "system mode tries macOS directly; AudD mode only opens its page")
+    expect(!bar.contains("recognition.start") && !bar.contains("audd?.start"), "the quick action never starts an AudD capture")
+    let guidance = page.components(separatedBy: "private var systemRecognition: some View")[1].components(separatedBy: "private var systemRecognitionStatus")[0]
+    expect(!guidance.contains("showingAudD") && !guidance.contains("audDTitle"), "macOS guidance offers no AudD shortcut")
+    expect(guidance.contains("SystemSettingsLink.open(.accessibility)"), "permission button opens Privacy & Security › Accessibility")
+    expect(page.contains("scaleEffect(reduceMotion ? 1 :"), "ShazamKit pulse honors Reduce Motion")
+    let lang = LanguageSettings.shared
+    let saved = lang.language
+    defer { lang.language = saved }
+    for language in [AppLanguage.english, .traditionalChinese, .simplifiedChinese] {
+        lang.language = language
+        let result = lang.t(.shazamShortcutResult, "Song — Artist")
+        expect(result.contains("Song — Artist") && result != "Song — Artist", "\(language): shortcut output is labelled as the shortcut's")
+        expect(lang.t(.shazamShortcutResult, "100% real").contains("100% real"), "\(language): literal text kept")
+        let notSelected = lang.t(.audDNotSelected)
+        expect(notSelected.contains("AudD") && notSelected.contains(lang.t(.recognitionSettings)), "\(language): says where to choose AudD")
+        for key in [L10nKey.shazamSystemFallback, .shazamSystemUnavailable, .shazamSystemNeedsAX, .shazamSystemNotExposed] {
+            let text = lang.t(key)
+            // Apple's own Control Center wording (MusicRecognition.loctable on macOS 27).
+            expect(text.contains(language == .english ? "Recognize Music" : (language == .traditionalChinese ? "辨識音樂" : "识别音乐")),
+                   "\(language) \(key): uses the system's control name")
+            expect(!["recognized", "已辨識", "已识别"].contains(where: text.contains), "\(language) \(key): never claims a result")
+        }
+    }
+}
+
 // MARK: - Localization
 
 await test("localization: every key has en/zh-Hant/zh-Hans and switching works") {
@@ -436,7 +491,7 @@ await test("data center: unreadable (locked) Keychain → visible error, no requ
         func read() -> String? { nil }
         func readKey() -> Result<String, ProviderError> { .failure(.keychainUnavailable) }
         func write(_ value: String) -> Bool { true }
-        func delete() {}
+        func delete() -> Bool { false }
     }
     let settings = WidgetSettings(defaults: freshDefaults(), secrets: LockedStore())
     settings.setEnabled(.timer, false) // keep room for the widgets under test
@@ -458,7 +513,7 @@ await test("data center: a Keychain read that never returns times out instead of
         func read() -> String? { nil }
         func readKey() -> Result<String, ProviderError> { Thread.sleep(forTimeInterval: 3); return .success("late") }
         func write(_ value: String) -> Bool { true }
-        func delete() {}
+        func delete() -> Bool { false }
     }
     let settings = WidgetSettings(defaults: freshDefaults(), secrets: HangingStore())
     settings.setEnabled(.timer, false) // keep room for the widgets under test
@@ -999,7 +1054,7 @@ await test("Control Center: only unambiguous Now Playing transport buttons are s
     expect(!MusicController(defaults: freshDefaults()).useControlCenter, "direct Control Center control is opt-in")
 }
 
-await test("system media: MediaRemote data parsing, restriction check, read-only probe") {
+await test("system media: fixture parsing and OS restriction check") {
     let ts = Date(timeIntervalSince1970: 1_800_000_000)
     let info: [String: Any] = ["kMRMediaRemoteNowPlayingInfoTitle": "All The Parties", "kMRMediaRemoteNowPlayingInfoArtist": "Drake",
                                "kMRMediaRemoteNowPlayingInfoAlbum": "For All The Dogs", "kMRMediaRemoteNowPlayingInfoDuration": 219.0,
@@ -1018,9 +1073,6 @@ await test("system media: MediaRemote data parsing, restriction check, read-only
     func v(_ a: Int, _ b: Int) -> OperatingSystemVersion { OperatingSystemVersion(majorVersion: a, minorVersion: b, patchVersion: 0) }
     expect(!SystemMedia.isRestrictedOS(v(14, 6)) && !SystemMedia.isRestrictedOS(v(15, 3)) && SystemMedia.isRestrictedOS(v(15, 4))
            && SystemMedia.isRestrictedOS(v(26, 0)) && SystemMedia.isRestrictedOS(v(27, 0)), "restriction from macOS 15.4")
-    // Read-only query, exactly what the app does (no commands are sent). Reported, not asserted.
-    let live = SystemMedia.readNowPlaying(timeout: 2)
-    print("    MediaRemote framework present: \(SystemMedia.isFrameworkPresent); returned data to this process: \(live != nil); OS restricted: \(SystemMedia.isRestrictedOS())")
 }
 
 await test("system media: media-key events are built correctly (never posted in tests) and controls are routed") {
@@ -1975,20 +2027,16 @@ await test("Control Center Recognize Music: acts only on identified controls, co
     expect(step([N(element: "elsewhere", names: [], pressable: false, children: [N(element: "x", names: ["Start Listening"], pressable: true)])]) == "nothing",
            "a Start Listening outside the Recognize Music panel is ignored")
     for text in ["Listening…", "Listening...", "聆聽中⋯", "正在听取…"] {
-        expect(step([panel([N(element: "t", names: [text], pressable: false)])]) == "listening", "confirms \(text)")
+        let header = N(element: "header", names: ["musicrecognition-header"], pressable: false, value: text)
+        expect(step([header]) == "listening", "confirms \(text) in the recognition header")
     }
-    // Real labels from this Mac's Control Center (read-only system resource).
-    if let data = try? Data(contentsOf: ControlCenterMedia.MusicLabels.loctable) {
-        let parsed = ControlCenterMedia.MusicLabels.from(loctable: data)
-        expect(parsed?.start.isSuperset(of: ["start listening", "開始聆聽", "开始听取"]) == true, "loctable start labels (en/zh)")
-        expect(parsed?.listening.contains(ControlCenterMedia.MusicLabels.normalize("聆聽中⋯")) == true, "loctable listening label")
-        expect((parsed?.start.count ?? 0) > 10, "all system languages, not just ours")
-    } else {
-        print("    (MusicRecognition.loctable not present on this macOS; built-in labels used)")
-    }
-    let plist = try PropertyListSerialization.data(fromPropertyList: ["fr": ["Start Listening": "Écouter", "Listening…": "Écoute…"]], format: .binary, options: 0)
-    expect(ControlCenterMedia.MusicLabels.from(loctable: plist)?.start == ["écouter"], "parses a loctable")
-    expect(ControlCenterMedia.MusicLabels.from(loctable: Data("x".utf8)) == nil, "garbage → nil (falls back to built-in)")
+    let sameNamedSong = N(element: "song", names: ["Listening…"], pressable: false)
+    expect(step([sameNamedSong]) == "nothing", "unrelated text never confirms listening")
+    expect(step([panel([sameNamedSong])]) == "panel", "song named Listening… does not confirm listening")
+    let history = N(element: "history", names: ["musicrecognition-history"], pressable: false,
+                    children: [N(element: "song", names: ["Start Listening"], pressable: true)])
+    expect(step([panel([history])]) == "panel", "a history item never counts as a start control")
+    expect(step([panel([]), panel([])]) == "panel", "ambiguous panels never confirm or start recognition")
 }
 
 await test("shazam: 30 s limit, cancel, honest errors, mono buffers") {
@@ -2021,7 +2069,8 @@ await test("shazam: 30 s limit, cancel, honest errors, mono buffers") {
         // Never claims a definite cause: offers both possibilities.
         expect(["may", "可能"].contains(where: catalog.contains), "\(language) 202 text is not a definite diagnosis")
         expect(["Control Center", "控制中心"].contains(where: fallback.contains), "\(language) fallback names Control Center")
-        expect(["doesn't come back", "不會回到", "不会回到"].contains(where: fallback.contains), "\(language) fallback says results stay in the system UI")
+        expect(["Look there for the result", "結果會顯示在控制中心", "结果会显示在控制中心"].contains(where: fallback.contains),
+               "\(language) fallback says where the result appears")
         expect(lang.t(.shazamService, "500").contains("500"), "\(language) generic error shows its code")
     }
     let buffer = ShazamRecognizer.monoBuffer([0.1, -0.2, 0.3], sampleRate: 48_000)
@@ -2124,6 +2173,16 @@ await test("AudD flow: consent and token first, user-picked source, one mocked u
                             microphoneAccess: { await MainActor.run { micAsked += 1 }; return false })
     MockAudD.reset()
     r.start(source: .systemAudio)
+    expect(r.phase == .notSelected && audio.begun.isEmpty && MockAudD.count == 0, "macOS is the default method → AudD refuses before anything")
+    expect(r.saveSetup(consent: true, token: "") && r.consented, "consent alone does not select AudD")
+    r.start(source: .systemAudio)
+    expect(r.phase == .notSelected && audio.begun.isEmpty && MockAudD.count == 0, "consent without choosing AudD still captures nothing")
+    r.revokeConsent()
+    d.set("unknown", forKey: MusicRecognitionMode.defaultsKey)
+    r.start(source: .systemAudio)
+    expect(r.phase == .notSelected, "an unknown stored mode never selects AudD")
+    d.set(MusicRecognitionMode.audd.rawValue, forKey: MusicRecognitionMode.defaultsKey)
+    r.start(source: .systemAudio)
     expect(r.phase == .needsConsent && audio.begun.isEmpty && MockAudD.count == 0, "no consent → no audio, no upload")
     expect(r.saveSetup(consent: true, token: "") && r.consented, "consent saved")
     r.start(source: .systemAudio); await settle(r)
@@ -2159,6 +2218,13 @@ await test("AudD flow: consent and token first, user-picked source, one mocked u
     quiet.start(source: .systemAudio); await settle(quiet)
     expect(quiet.phase == .noAudio && MockAudD.count == 0, "silence is never uploaded")
 
+    let unavailable = SyntheticAudio()
+    unavailable.ok = false
+    let blocked = AudDRecognition(secrets: store, defaults: d, session: session, audio: unavailable)
+    blocked.start(source: .systemAudio); await settle(blocked)
+    expect(blocked.phase == .sourceUnavailable(.systemAudio) && MockAudD.count == 0,
+           "failed source setup is distinct from silence and sends no clip")
+
     let slow = AudDRecognition(secrets: store, defaults: d, session: session, audio: audio, listenDuration: .seconds(5))
     MockAudD.reset()
     slow.start(source: .systemAudio)
@@ -2166,16 +2232,20 @@ await test("AudD flow: consent and token first, user-picked source, one mocked u
     while slow.phase != .listening && Date() < deadline { try await Task.sleep(for: .milliseconds(5)) }
     expect(slow.phase == .listening && slow.heldClip != nil, "listening holds a clip in memory")
     let held = slow.heldClip
-    slow.cancel()
+    slow.revokeConsent()
     try await Task.sleep(for: .milliseconds(150))
-    expect(slow.phase == .cancelled && slow.heldClip == nil && held?.sampleCount == 0 && held?.isClosed == true, "cancel wipes the clip")
+    expect(!slow.consented && slow.phase == .cancelled && slow.heldClip == nil && held?.sampleCount == 0 && held?.isClosed == true, "revoking consent cancels capture and discards the clip")
     expect(MockAudD.count == 0, "cancel before sending → nothing uploaded")
 
-    r.removeToken()
-    expect(store.value == nil && !r.hasToken, "token removed")
+    expect(r.removeToken() && store.value == nil && !r.hasToken, "token removed")
     r.revokeConsent()
+    expect(!r.saveSetup(consent: true, token: "has space") && !r.consented, "rejected setup does not grant new consent")
     r.start(source: .systemAudio)
     expect(r.phase == .needsConsent, "revoked consent blocks again")
+    d.set(MusicRecognitionMode.system.rawValue, forKey: MusicRecognitionMode.defaultsKey)
+    r.saveSetup(consent: true, token: "")
+    r.start(source: .systemAudio)
+    expect(r.phase == .notSelected, "switching back to macOS blocks AudD even with consent")
     let lang = LanguageSettings.shared
     let saved = lang.language; defer { lang.language = saved }
     for language in [AppLanguage.english, .traditionalChinese, .simplifiedChinese] {
@@ -2193,17 +2263,18 @@ final class LockedSecretStore: SecretStore, @unchecked Sendable {
     func read() -> String? { nil }
     func readKey() -> Result<String, ProviderError> { .failure(.keychainUnavailable) }
     func write(_ value: String) -> Bool { false }
-    func delete() {}
+    func delete() -> Bool { false }
 }
 
 await test("AudD: an unreadable Keychain item is reported as such, never as 'no token' and never uploads") {
     let d = freshDefaults()
     let audio = SyntheticAudio()
+    d.set(MusicRecognitionMode.audd.rawValue, forKey: MusicRecognitionMode.defaultsKey)
     let r = AudDRecognition(secrets: LockedSecretStore(), defaults: d, session: AudDService.makeSession(protocolClasses: [MockAudD.self]),
                             audio: audio, listenDuration: .milliseconds(10))
-    r.refreshTokenState()
-    try await Task.sleep(for: .milliseconds(150))
-    expect(r.hasToken, "stored-but-locked counts as present")
+    await r.refreshTokenState()
+    expect(r.tokenState == .unavailable, "unreadable token status is explicit")
+    expect(!r.removeToken() && r.tokenState == .unavailable, "a refused deletion is not reported as success")
     r.saveSetup(consent: true, token: "")
     MockAudD.reset()
     r.start(source: .systemAudio); await settle(r)
@@ -2219,7 +2290,13 @@ await test("island: quick actions row, subpages reset on open, toast is a tempor
     model.subpage = .clipboard
     model.setExpanded(true)
     expect(model.subpage == .none && model.page == .widgets, "opening the island starts on the widgets")
-    model.subpage = .shazam
+    model.startSystemRecognition(feedbackDuration: .zero, run: { .menuBarNotExposed })
+    while model.checkingSystemRecognition { await Task.yield() }
+    expect(model.subpage == .shazam(.menuBarNotExposed), "AX failure opens the matching guidance")
+    model.subpage = .none
+    model.startSystemRecognition(feedbackDuration: .zero, run: { .listening })
+    while model.checkingSystemRecognition { await Task.yield() }
+    expect(model.subpage == .none, "confirmed listening leaves the system UI in control")
     model.setExpanded(false)
     model.showToast(.init(symbol: "checkmark", text: "OK", style: .success), duration: 0.1)
     expect(model.mode == .compact && model.toast != nil, "toast shows in the notch")
@@ -2239,6 +2316,389 @@ await test("onboarding: shown once, never resets existing settings") {
     expect(!OnboardingState.shouldShow(d), "not shown again")
 }
 
+// MARK: - 0.1.1
+
+await test("time 0.1.1: rapid skips, stale sources coming back, same length, flicker, late reads, ads") {
+    typealias S = BrowserMedia.TimeSample
+    let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+    func at(_ s: Double) -> Date { t0.addingTimeInterval(s) }
+    func both(_ p: Double, _ d: Double) -> BrowserMedia.TimeSamples { .init(ui: S(position: p, duration: d), player: S(position: p + 0.2, duration: d), element: nil) }
+    func only(_ p: Double, _ d: Double) -> BrowserMedia.TimeSamples { .init(ui: nil, player: S(position: p, duration: d), element: S(position: p, duration: d)) }
+
+    // A → B → C quickly; B is never shown. The page's player/element still run A's timeline
+    // under C's ID. The old resolver forgot A at the second change and stacked A's time on C.
+    var rapid = BrowserMedia.TimeResolver()
+    _ = rapid.resolve(item: "A", samples: only(150, 240), isPlaying: true, at: at(0))
+    expect(rapid.resolve(item: "B", samples: .init(ui: S(position: 151, duration: 240), player: S(position: 1, duration: 200), element: nil), isPlaying: true, at: at(1)) == nil, "B: sources disagree → hidden")
+    var leaked: [Double] = []
+    for k in 0..<8 {
+        if let r = rapid.resolve(item: "C", samples: only(152 + Double(k), 240), isPlaying: true, at: at(2 + Double(k))) { leaked.append(r.0.position) }
+    }
+    expect(leaked.isEmpty, "C never shows A's continuing time after two quick skips: \(leaked)")
+    expect(rapid.rememberedItems.contains("A"), "A's timeline is still remembered")
+    expect(rapid.resolve(item: "C", samples: only(2, 190), isPlaying: true, at: at(11))?.0.position == 2, "C's own time appears once the page catches up")
+
+    // Stale source comes back after the new song was already shown (old code dropped A then).
+    var back = BrowserMedia.TimeResolver()
+    _ = back.resolve(item: "A", samples: only(100, 200), isPlaying: true, at: at(0))
+    expect(back.resolve(item: "B", samples: only(1, 180), isPlaying: true, at: at(2))?.0.position == 1, "B shown")
+    expect(back.resolve(item: "B", samples: only(104, 200), isPlaying: true, at: at(4)) == nil, "A's timeline reappearing under B is hidden, not stacked")
+    expect(back.resolve(item: "B", samples: only(3, 180), isPlaying: true, at: at(4.5))?.0.position == 3, "B's own time right after")
+
+    // Same-length songs: the player bar keeps A's time (same duration) for a moment.
+    var same = BrowserMedia.TimeResolver()
+    _ = same.resolve(item: "A", samples: both(190, 200), isPlaying: true, at: at(0))
+    let stale1 = same.resolve(item: "B", samples: .init(ui: S(position: 191, duration: 200), player: S(position: 191.2, duration: 200), element: nil), isPlaying: true, at: at(1))
+    let stale2 = same.resolve(item: "B", samples: .init(ui: S(position: 192, duration: 200), player: S(position: 192.2, duration: 200), element: nil), isPlaying: true, at: at(2))
+    expect(stale1 == nil && stale2 == nil, "same length, old position continuing → hidden")
+    expect(same.resolve(item: "B", samples: both(1, 200), isPlaying: true, at: at(3))?.0.position == 1.2, "same-length new song from 0:01 shown")
+
+    // Skip only 4 s in: a stale bar with the same length used to pass as a fresh start (≤ 6 s slack).
+    var early = BrowserMedia.TimeResolver()
+    _ = early.resolve(item: "A", samples: both(4, 210), isPlaying: true, at: at(0))
+    expect(early.resolve(item: "B", samples: both(5, 210), isPlaying: true, at: at(1)) == nil, "exact old signature, even near the start → hidden")
+    expect(early.resolve(item: "B", samples: both(0.5, 210), isPlaying: true, at: at(1.6))?.0.position == 0.7, "real start of B shown")
+
+    // No title / missing metadata: identity flickers A → A′ → A. A's own time is restored at once.
+    var flicker = BrowserMedia.TimeResolver()
+    _ = flicker.resolve(item: "Song|Artist|", samples: both(60, 240), isPlaying: true, at: at(0))
+    expect(flicker.resolve(item: "Song||", samples: both(61, 240), isPlaying: true, at: at(1)) == nil, "while metadata is missing the old line is not trusted")
+    let restored = flicker.resolve(item: "Song|Artist|", samples: .init(ui: S(position: 62, duration: 240), player: nil, element: nil), isPlaying: true, at: at(2))
+    expect(restored?.0.position == 62, "back to the same item: its own timeline continues immediately (single source, no wait): \(String(describing: restored))")
+
+    // A read that started earlier but returned later is ignored.
+    var late = BrowserMedia.TimeResolver()
+    _ = late.resolve(item: "A", samples: both(10, 200), isPlaying: true, at: at(10))
+    expect(late.resolve(item: "B", samples: both(1, 180), isPlaying: true, at: at(9)) == nil, "older sample (previous song's scan) dropped")
+    expect(late.resolve(item: "A", samples: both(11, 200), isPlaying: true, at: at(11))?.0.position == 11.2, "late sample changed nothing")
+
+    // Ad between songs: nothing during the ad, the ad's own clock never becomes the song's.
+    var ad = BrowserMedia.TimeResolver()
+    _ = ad.resolve(item: "A", samples: both(230, 235), isPlaying: true, at: at(0))
+    for k in 0..<5 {
+        expect(ad.resolve(item: "B", samples: .init(ui: S(position: Double(k), duration: 15), player: S(position: Double(k), duration: 15), element: nil, blocked: true), isPlaying: true, at: at(2 + Double(k))) == nil, "ad \(k): hidden")
+    }
+    expect(ad.resolve(item: "B", samples: both(0.5, 200), isPlaying: true, at: at(8))?.0.position == 0.7, "song after the ad from its own start")
+    expect(ad.resolve(item: "B", samples: only(239.5, 600), isPlaying: true, at: at(9)) == nil, "A's continuous element line (230.2 + 9 s) still hidden after the ad")
+
+    // Once B has been shown for a while, earlier timelines are forgotten: a seek in B that
+    // happens to land on A's line is shown (never hidden indefinitely).
+    var forget = BrowserMedia.TimeResolver()
+    _ = forget.resolve(item: "A", samples: both(100, 240), isPlaying: true, at: at(0))
+    _ = forget.resolve(item: "B", samples: both(1, 240), isPlaying: true, at: at(2))
+    _ = forget.resolve(item: "B", samples: both(19, 240), isPlaying: true, at: at(20))
+    expect(forget.resolve(item: "B", samples: both(121, 240), isPlaying: true, at: at(21))?.0.position == 121.2, "after 15 s of B, a seek onto A's old line is shown")
+    expect(forget.rememberedItems.isEmpty, "earlier timelines dropped")
+
+    // Same song re-identified (ID or metadata arrives late): the bar keeps advancing on the
+    // "previous" line. Hidden briefly, then shown — never hidden for the rest of the song.
+    var rekey = BrowserMedia.TimeResolver()
+    _ = rekey.resolve(item: "Song|Artist|", samples: both(40, 240), isPlaying: true, at: at(0))
+    var shownAfter: Double?
+    for k in 1...20 where shownAfter == nil {
+        if rekey.resolve(item: "videoID-x", samples: both(40 + Double(k), 240), isPlaying: true, at: at(Double(k))) != nil { shownAfter = Double(k) }
+    }
+    // The change is first seen at t = 1 s.
+    expect(shownAfter != nil && shownAfter! - 1 <= BrowserMedia.TimeResolver.visibleLagLimit + 1, "re-identified song shown ≤ 9 s after the change: \(String(describing: shownAfter))")
+    // …but an element-only continuous timeline (no visible bar) still stays hidden.
+    var elementOnly = BrowserMedia.TimeResolver()
+    _ = elementOnly.resolve(item: "A", samples: only(40, 600), isPlaying: true, at: at(0))
+    var leakedLater: [Double] = []
+    for k in 1...20 { if let r = elementOnly.resolve(item: "B", samples: only(40 + Double(k), 600), isPlaying: true, at: at(Double(k))) { leakedLater.append(r.0.position) } }
+    expect(leakedLater.isEmpty, "continuous element line without a visible bar: hidden for 20 s: \(leakedLater)")
+    // Consecutive auto-advance through five songs with lagging player bar: never shows a previous song's time.
+    var chain = BrowserMedia.TimeResolver()
+    var t = 0.0, stacked: [String] = []
+    for song in 0..<5 {
+        let length = 180 + Double(song % 2) * 0 // same length every time (hardest case)
+        for p in stride(from: 170.0, through: 179, by: 1) { _ = chain.resolve(item: "S\(song)", samples: both(p, length), isPlaying: true, at: at(t)); t += 1 }
+        // Next song: bar shows the old time for two reads, then the new one.
+        let next = "S\(song + 1)"
+        for k in 0..<2 {
+            if chain.resolve(item: next, samples: both(180, length), isPlaying: true, at: at(t)) != nil { stacked.append("\(next) stale \(k)") }
+            t += 0.55
+        }
+        let fresh = chain.resolve(item: next, samples: both(0.4, length), isPlaying: true, at: at(t)); t += 1
+        if fresh == nil { stacked.append("\(next) not shown") }
+    }
+    expect(stacked.isEmpty, "five same-length auto-advances: \(stacked)")
+}
+
+await test("time 0.1.1: seeded sweep — stale samples never shown, fresh songs always shown within 6 s") {
+    typealias S = BrowserMedia.TimeSample
+    let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+    var seed: UInt64 = 0x5EED_0111
+    func rnd(_ range: ClosedRange<Double>) -> Double {
+        seed = seed &* 6364136223846793005 &+ 1442695040888963407
+        return range.lowerBound + Double(seed >> 11) / Double(1 << 53) * (range.upperBound - range.lowerBound)
+    }
+    var shownStale: [String] = [], neverShown: [String] = []
+    for run in 0..<400 {
+        var r = BrowserMedia.TimeResolver()
+        let oldLength = rnd(120...420), oldPos = rnd(8...(oldLength - 1))
+        let sameLength = run % 3 == 0
+        let newLength = sameLength ? oldLength + rnd(-0.8...0.8) : rnd(120...420)
+        let shape = run % 4 // 0: ui+player, 1: player+element, 2: ui only, 3: player only
+        func samples(_ p: Double, _ d: Double) -> BrowserMedia.TimeSamples {
+            switch shape {
+            case 0: return .init(ui: S(position: p, duration: d), player: S(position: p + 0.1, duration: d), element: nil)
+            case 1: return .init(ui: nil, player: S(position: p, duration: d), element: S(position: p + 0.05, duration: d))
+            case 2: return .init(ui: S(position: p, duration: d), player: nil, element: nil)
+            default: return .init(ui: nil, player: S(position: p, duration: d), element: nil)
+            }
+        }
+        var t = 0.0
+        for k in 0..<3 { _ = r.resolve(item: "A", samples: samples(oldPos + Double(k), oldLength), isPlaying: true, at: t0.addingTimeInterval(t)); t += 1 }
+        let change = t
+        let lag = rnd(0...2.5)          // new song started before the change was seen
+        var firstShown: Double?
+        while t < change + 12 {
+            let since = t - change
+            let stale = since < 2.2 && rnd(0...1) < 0.6
+            let p = stale ? oldPos + 2 + (t - (change - 1)) : lag + since
+            if let res = r.resolve(item: "B", samples: samples(p, stale ? oldLength : newLength), isPlaying: true, at: t0.addingTimeInterval(t)) {
+                if stale { shownStale.append("run \(run) shape \(shape) at +\(String(format: "%.1f", since)) s: \(res.0.position)") }
+                else if firstShown == nil { firstShown = since }
+            }
+            t += 0.55
+        }
+        if (firstShown ?? .infinity) > 6 { neverShown.append("run \(run) shape \(shape) oldPos \(Int(oldPos)) same \(sameLength): \(String(describing: firstShown))") }
+    }
+    expect(shownStale.isEmpty, "no stale (previous song's) time shown: \(shownStale.prefix(4))")
+    expect(neverShown.isEmpty, "every fresh song shown within 6 s: \(neverShown.prefix(4))")
+}
+
+await test("time 0.1.1: MusicController keeps the old timeline across an empty scan; hidden time hides its length too") {
+    let music = MusicController(defaults: freshDefaults())
+    typealias S = BrowserMedia.TimeSample
+    let t0 = Date()
+    func snap(_ id: String, _ title: String, _ samples: BrowserMedia.TimeSamples, _ t: Double) -> MusicController.Snapshot {
+        MusicController.Snapshot(source: .chrome, track: .init(title: title, artist: "", album: "", duration: samples.player?.duration),
+                                 isPlaying: true, position: samples.player?.position, browserTab: (ref: "1/2", site: .youtubeMusic),
+                                 browserVideoID: id, timeSamples: samples, sampledAt: t0.addingTimeInterval(t))
+    }
+    let a = BrowserMedia.TimeSamples(ui: S(position: 200, duration: 230), player: S(position: 200.2, duration: 230), element: nil)
+    music.applyForTesting(snap("idA", "A", a, 0))
+    expect(music.position == 200.2 && music.track?.duration == 230, "A shown")
+    // Song change: metadata briefly missing → the scan returns nothing.
+    music.applyForTesting(nil)
+    expect(music.track == nil, "nothing shown for a moment")
+    // B arrives while player and element still run A's timeline (agreeing with each other).
+    let stale = BrowserMedia.TimeSamples(ui: nil, player: S(position: 203, duration: 230), element: S(position: 203, duration: 230))
+    music.applyForTesting(snap("idB", "B", stale, 3))
+    expect(music.track?.title == "B" && music.position == nil, "B is shown without A's time (old code reset the resolver on the empty scan): \(String(describing: music.position))")
+    expect(music.track?.duration == nil, "and without A's length")
+    let fresh = BrowserMedia.TimeSamples(ui: S(position: 1, duration: 190), player: S(position: 1.1, duration: 190), element: nil)
+    music.applyForTesting(snap("idB", "B", fresh, 4))
+    expect(music.position == 1.1 && music.track?.duration == 190, "B's own time")
+    expect(MusicController.timelineOwner(source: .chrome, tab: (ref: "1/2", site: .youtubeMusic))
+           != MusicController.timelineOwner(source: .chrome, tab: (ref: "1/3", site: .youtubeMusic)), "each tab has its own timelines")
+    expect(MusicController.timelineOwner(source: .music, tab: nil) == "music", "native players are separate")
+}
+
+await test("permissions: Allow always does something, Open Settings opens the exact pane, status refreshes") {
+    expect(PostEventAccess.step(granted: true, alreadyRequestedThisBuild: false) == .nothing, "granted → nothing")
+    expect(PostEventAccess.step(granted: false, alreadyRequestedThisBuild: false) == .systemPrompt, "first press asks macOS")
+    expect(PostEventAccess.step(granted: false, alreadyRequestedThisBuild: true) == .openSettings, "later presses open Settings (macOS only asks once)")
+    var granted = false, prompts = 0, opened = 0
+    let defaults = freshDefaults()
+    let access = PostEventAccess(defaults: defaults, preflight: { granted }, requestSystem: { prompts += 1 },
+                                 openSettings: { opened += 1; return true }, buildID: "build-2")
+    access.request()
+    expect(prompts == 1 && opened == 0 && access.feedback == .prompted, "first press → system request")
+    access.request()
+    expect(prompts == 1 && opened == 1 && access.feedback == .openedSettings, "second press → Accessibility pane, no silent no-op")
+    access.showSettings()
+    expect(opened == 2, "Open Settings button")
+    granted = true
+    access.refresh()
+    expect(access.granted && access.feedback == .none && defaults.string(forKey: PostEventAccess.grantedBuildKey) == "build-2", "grant picked up without reopening Settings")
+    // A grant for an earlier ad-hoc build is recognised (rebuild changed the identity).
+    let staleDefaults = freshDefaults()
+    staleDefaults.set("build-1", forKey: PostEventAccess.grantedBuildKey)
+    let stale = PostEventAccess(defaults: staleDefaults, preflight: { false }, requestSystem: {}, openSettings: { false }, buildID: "build-2")
+    expect(stale.grantLooksStale, "stale grant explained")
+    stale.showSettings()
+    expect(stale.feedback == .couldNotOpen, "failure to open is reported, not hidden")
+    // URL fallbacks: legacy pane id → new extension id → System Settings itself.
+    var tried: [String] = []
+    expect(SystemSettingsLink.open(.pasteboard) { tried.append($0.absoluteString); return tried.count == 2 }, "second URL opened")
+    expect(tried == ["x-apple.systempreferences:com.apple.preference.security?Privacy_Pasteboard",
+                     "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Pasteboard"], "order: \(tried)")
+    tried = []
+    _ = SystemSettingsLink.open(.accessibility) { tried.append($0.absoluteString); return false }
+    expect(tried.last == SystemSettingsLink.settingsApp.absoluteString && tried.count == 4, "last resort: System Settings app")
+    expect(SystemSettingsLink.battery.first?.absoluteString == "x-apple.systempreferences:com.apple.Battery-Settings.extension", "Battery pane")
+    // Anchors exist in this Mac's System Settings (read-only check of the installed binary).
+    let ext = "/System/Library/ExtensionKit/Extensions/SecurityPrivacyExtension.appex/Contents/MacOS/SecurityPrivacyExtension"
+    if let data = FileManager.default.contents(atPath: ext) {
+        for pane in PrivacyPane.allCases {
+            expect(data.range(of: Data(pane.rawValue.utf8)) != nil, "\(pane.rawValue) is a real anchor on this macOS")
+        }
+    }
+    // Pasteboard privacy (macOS 15.4+): mapping and a read that never prompts.
+    expect([0, 1, 2, 3].map(PasteboardAccess.from) == [.notAskedYet, .asks, .allowed, .denied], "access behaviour mapping")
+    expect(!PasteboardAccess.denied.historyCanRecord && PasteboardAccess.allowed.historyCanRecord, "denied → history can't record")
+    let privateBoard = NSPasteboard(name: .init("NotchIslandTests.\(UUID().uuidString)"))
+    if #available(macOS 15.4, *) { expect(PasteboardAccess.current(privateBoard) == .allowed, "non-general pasteboards are always allowed") }
+    privateBoard.releaseGlobally()
+    let lang = LanguageSettings.shared
+    let saved = lang.language
+    defer { lang.language = saved }
+    for (language, pane) in [(AppLanguage.english, "Paste from Other Apps"), (.traditionalChinese, "從其他App貼上"), (.simplifiedChinese, "从其他App粘贴")] {
+        lang.language = language
+        expect(lang.t(.pasteboardAsks).contains(pane) && lang.t(.pasteboardDenied).contains(pane), "\(language): System Settings' own pane name")
+        expect(!lang.t(.permPromptedHint).isEmpty && lang.t(.pasteNeedsPermission).contains(lang.t(.openSettings)), "\(language): paste hint names the button")
+    }
+    let settingsSource = try String(contentsOfFile: "Sources/NotchIsland/SettingsWindow.swift", encoding: .utf8)
+    expect(!settingsSource.contains("SystemMedia.requestPostEventAccess() }"), "Settings no longer calls the one-shot request directly")
+}
+
+await test("shazam 0.1.1: Control Center honesty, shortcut not found / stop / time limit") {
+    let notFound = Data("Error: The operation couldn’t be completed. Couldn’t find shortcut\n".utf8)
+    expect(ShazamRecognizer.shortcutOutcome(status: 1, reason: .exit, output: Data(), errorOutput: notFound) == .notFound,
+           "the literal stderr of /usr/bin/shortcuts on macOS 27 → not found")
+    expect(ShazamRecognizer.shortcutOutcome(status: 1, reason: .exit, output: Data(), errorOutput: Data("Error: something else".utf8)) == .failed, "other errors stay generic")
+    expect(ShazamRecognizer.shortcutOutcome(status: 0, reason: .exit, output: Data("Song — Artist\n".utf8)) == .result("Song — Artist"), "text result")
+    expect(ShazamRecognizer.shortcutOutcome(status: 15, reason: .uncaughtSignal, output: Data(), errorOutput: notFound) == .failed, "killed ≠ not found")
+    expect(ShazamRecognizer.shortcutTimeout == 90, "time limit")
+    let shazam = ShazamRecognizer()
+    shazam.stopShortcut()
+    expect(shazam.shortcutPhase == .idle, "stop without a running shortcut does nothing")
+    let lang = LanguageSettings.shared
+    let saved = lang.language
+    defer { lang.language = saved }
+    for language in [AppLanguage.english, .traditionalChinese, .simplifiedChinese] {
+        lang.language = language
+        let text = lang.t(.shazamSystemNotExposed)
+        expect(text.contains(language == .english ? "Control Center" : (language == .traditionalChinese ? "控制中心" : "控制中心")), "\(language): says where the result is")
+        expect(lang.t(.shazamShortcutNotFound, "X").contains("X"), "\(language): names the shortcut")
+        expect(!lang.t(.shazamSystemFallback).isEmpty && !lang.t(.shazamShortcutHelp).contains("Gallery first"), "\(language): updated guidance")
+    }
+    let page = try String(contentsOfFile: "Sources/NotchIsland/IslandPages.swift", encoding: .utf8)
+    expect(page.contains("case .menuBarNotExposed: return lang.t(.shazamSystemNotExposed)"), "page explains the measured macOS 27 limitation")
+    let cc = try String(contentsOfFile: "Sources/NotchIsland/ControlCenterMedia.swift", encoding: .utf8)
+    expect(cc.contains("if menu.isEmpty { return .menuBarNotExposed }"), "no menu-bar items → honest result, nothing pressed")
+}
+
+await test("power: charger and low-battery moments without jitter or repeats") {
+    typealias D = PowerEventDetector
+    func snap(_ p: Int, ac: Bool, charging: Bool? = nil) -> BatterySnapshot {
+        BatterySnapshot(percent: p, isCharging: charging ?? ac, onACPower: ac, isCharged: false, minutesToEmpty: nil, minutesToFull: nil)
+    }
+    let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+    func at(_ s: Double) -> Date { t0.addingTimeInterval(s) }
+    var d = D()
+    expect(d.observe(snap(60, ac: true), at: at(0)).isEmpty, "launch while plugged in: no fake 'connected'")
+    expect(d.observe(snap(60, ac: false), at: at(5)).isEmpty, "unplug: nothing")
+    expect(d.observe(snap(60, ac: true), at: at(20)) == [.connected(percent: 60, charging: true)], "plug in → once")
+    _ = d.observe(snap(60, ac: false), at: at(22))
+    expect(d.observe(snap(60, ac: true), at: at(24)).isEmpty, "loose cable within 10 s: not repeated")
+    _ = d.observe(snap(60, ac: false), at: at(40))
+    expect(d.observe(snap(61, ac: true, charging: false), at: at(41)) == [.connected(percent: 61, charging: false)], "after the cooldown: again (charge on hold → not 'charging')")
+    expect(d.observe(nil, at: at(42)).isEmpty, "no battery → nothing")
+
+    var low = D()
+    _ = low.observe(snap(22, ac: false), at: at(0))
+    expect(low.observe(snap(21, ac: false), at: at(1)).isEmpty, "21 %: nothing")
+    expect(low.observe(snap(20, ac: false), at: at(2)) == [.low(percent: 20, threshold: 20)], "20 % → alert")
+    expect(low.observe(snap(21, ac: false), at: at(3)).isEmpty && low.observe(snap(20, ac: false), at: at(4)).isEmpty, "jitter around 20 %: once")
+    expect(low.observe(snap(19, ac: true), at: at(5)).first == .connected(percent: 19, charging: true), "plug in at 19 %")
+    expect(low.observe(snap(19, ac: false), at: at(6)).isEmpty, "unplug at 19 %: not repeated")
+    expect(low.observe(snap(10, ac: false), at: at(7)) == [.low(percent: 10, threshold: 10)], "10 % → second (last) alert")
+    expect(low.observe(snap(9, ac: false), at: at(8)).isEmpty, "below 10 %: nothing more")
+    _ = low.observe(snap(26, ac: true), at: at(100))
+    expect(low.observe(snap(20, ac: false), at: at(200)) == [.low(percent: 20, threshold: 20)], "charged back above 25 % → re-armed")
+    var launch = D()
+    expect(launch.observe(snap(8, ac: false), at: at(0)) == [.low(percent: 8, threshold: 10)], "launch at 8 %: one alert, not two")
+    var onAC = D()
+    expect(onAC.observe(snap(5, ac: true), at: at(0)).isEmpty, "low but charging: no alert")
+
+    // Controller → island: toast, banner, expanded, disabled, language.
+    let defaults = freshDefaults()
+    let model = IslandViewModel(geometry: NotchGeometry(screenFrame: NSRect(x: 0, y: 0, width: 1512, height: 982), hasNotch: true,
+                                                        notchRect: NSRect(x: 662, y: 950, width: 185, height: 32)),
+                                timer: CountdownTimer(defaults: defaults), music: MusicController(defaults: defaults), stopwatch: Stopwatch(defaults: defaults))
+    var clock = t0
+    let power = PowerAlertController(model: model, defaults: defaults, now: { clock })
+    expect(power.enabled, "on by default (local, no permission)")
+    power.handle(.available(snap(50, ac: false)))
+    clock = at(30)
+    power.handle(.available(snap(50, ac: true)))
+    expect(model.toast?.text == "50%" && model.toast?.symbol == "bolt.fill" && model.toast?.accessibilityText?.contains("50") == true, "charging toast with percent")
+    clock = at(60)
+    power.handle(.available(snap(20, ac: false)))
+    expect(model.banner == IslandBanner(kind: .lowBattery(percent: 20)) && model.mode == .compact, "low battery banner below the notch")
+    // Hit testing: buttons on the banner are clickable, but it is not a hover-to-expand target.
+    let inside = NSPoint(x: 662 + 92, y: 950 - 30)
+    expect(model.bannerContains(inside) && model.acceptsMouse(at: inside), "banner takes clicks")
+    expect(!model.activationContains(inside), "hovering the banner doesn't expand the island")
+    expect(model.activationContains(NSPoint(x: 754, y: 975)), "the notch still expands it")
+    clock = at(90)
+    power.handle(.available(snap(20, ac: true)))
+    expect(model.banner == nil, "plugging in dismisses the low-battery card")
+    // Expanded: charging is shown over the panel; a low alert waits until it collapses.
+    model.setExpanded(true)
+    clock = at(200); power.handle(.available(snap(30, ac: false)))
+    clock = at(300); power.handle(.available(snap(30, ac: true)))
+    expect(model.toast?.text == "30%" && model.toast?.symbol == "bolt.fill", "charging toast is available while expanded")
+    clock = at(400); power.handle(.available(snap(10, ac: false)))
+    expect(model.banner == nil, "not shown over the expanded panel")
+    model.setExpanded(false)
+    expect(model.banner == IslandBanner(kind: .lowBattery(percent: 10)), "shown after collapsing")
+    model.dismissBanner()
+    power.setEnabled(false)
+    clock = at(500); power.handle(.available(snap(5, ac: true)))
+    expect(model.banner == nil, "disabled → nothing")
+    // Reduce Motion: no springs.
+    model.reduceMotion = { true }
+    expect(model.modeAnimation(expanding: true) == IslandViewModel.reducedMotionAnimation, "reduce motion → short ease")
+    model.reduceMotion = { false }
+    expect(model.modeAnimation(expanding: true) == IslandViewModel.expandAnimation, "springs otherwise")
+    let lang = LanguageSettings.shared
+    let saved = lang.language
+    defer { lang.language = saved }
+    for (language, word) in [(AppLanguage.english, "Low Power Mode"), (.traditionalChinese, "低耗電模式"), (.simplifiedChinese, "低电量模式")] {
+        lang.language = language
+        expect(lang.t(.lowBatteryRemaining, "20").contains("20%") && lang.t(.lowPowerModeButton).contains(word) && lang.t(.lowPowerModeHelp).contains(word), "\(language): banner text uses macOS's own name")
+    }
+    let source = try String(contentsOfFile: "Sources/NotchIsland/PowerAlerts.swift", encoding: .utf8)
+    expect(!source.contains("pmset -a") && !source.contains("AuthorizationExecuteWithPrivileges") && !source.contains("sudo"), "never switches Low Power Mode itself")
+}
+
+await test("layout 0.1.1: shorter island, same widget cards and notch geometry") {
+    expect(IslandViewModel.expandedWidth == 560 && IslandViewModel.expandedWidth < 580, "20 pt shorter than 0.1.0")
+    // 0.1.0: floor((580 − 2·20 − 3·10) / 4) = 127 for four cards; one to three cards were height-limited.
+    for count in 1...4 {
+        let old = floor(min(138, (580 - 40 - 10 * CGFloat(count - 1)) / CGFloat(count)))
+        expect(IslandViewModel.widgetCardSide(count: count, rowHeight: 138) >= old, "\(count) cards keep their size (\(old))")
+    }
+    expect(IslandViewModel.widgetCardSide(count: 4, rowHeight: 138) == 127, "four cards: 127 pt")
+    expect(WidgetsPage.spacing == IslandViewModel.widgetCardSpacing, "page uses the same spacing")
+    let quick = (IslandViewModel.expandedWidth - 2 * IslandViewModel.widgetsHorizontalPadding - 3 * 8) / 4
+    expect(quick >= 125, "quick-action buttons stay wide: \(quick)")
+    let defaults = freshDefaults()
+    let notch = NSRect(x: 662, y: 950, width: 185, height: 32)
+    let model = IslandViewModel(geometry: NotchGeometry(screenFrame: NSRect(x: 0, y: 0, width: 1512, height: 982), hasNotch: true, notchRect: notch),
+                                timer: CountdownTimer(defaults: defaults), music: MusicController(defaults: defaults), stopwatch: Stopwatch(defaults: defaults))
+    expect(model.neckWidth(for: .idle, hovering: false) == 185 && model.neckWidth(for: .expanded, hovering: false) == 185, "notch geometry unchanged")
+    expect(model.windowSize.width == 560 + 2 * IslandViewModel.windowPadding, "window follows the new width")
+    model.setExpanded(true)
+    expect(model.shapeContains(NSPoint(x: 754 - 270, y: 950 - 100)) && !model.shapeContains(NSPoint(x: 754 - 290, y: 950 - 100)), "expanded body is 560 wide")
+}
+
+await test("DMG 0.1.1: no dark header or title, icons and arrow kept, README hint, layout constants agree") {
+    let art = try String(contentsOfFile: "scripts/render_artwork.swift", encoding: .utf8)
+    expect(!art.contains("0x14223A") && !art.contains("label(\"Notch Island\""), "dark header and title removed")
+    expect(art.contains("please read the README") && art.contains("請閱讀 README"), "README hint (EN + 繁中)")
+    expect(art.contains("arrow.addLine") && art.contains("drawIcon"), "arrow and icon artwork kept")
+    let settings = try String(contentsOfFile: "scripts/dmg_settings.py", encoding: .utf8)
+    let make = try String(contentsOfFile: "scripts/make_dmg.sh", encoding: .utf8)
+    expect(art.contains("let installerIconRow: CGFloat = 165") && settings.contains("(158, 165)") && settings.contains("(462, 165)")
+           && make.contains("app[1] == link[1] == 165"), "icon row 165 everywhere")
+    expect(settings.contains("symlinks = {\"Applications\": \"/Applications\"}"), "Applications shortcut kept")
+}
+
 await test("packaging & publishing: purpose strings, .gitignore, secret scan never prints values") {
     let plist = try String(contentsOfFile: "Resources/Info.plist", encoding: .utf8)
     expect(plist.contains("NSMicrophoneUsageDescription") && plist.contains("NSAppleEventsUsageDescription"), "microphone and media automation purpose strings")
@@ -2247,8 +2707,8 @@ await test("packaging & publishing: purpose strings, .gitignore, secret scan nev
     // private 0.3.x builds, so the build number must keep increasing (0.3.2 was 5)
     // and nothing may key migrations on the marketing version.
     let info = try PropertyListSerialization.propertyList(from: Data(contentsOf: URL(fileURLWithPath: "Resources/Info.plist")), format: nil) as? [String: Any]
-    expect(info?["CFBundleShortVersionString"] as? String == "0.1.0", "release version matches the v0.1.0 tag")
-    expect(Int(info?["CFBundleVersion"] as? String ?? "") ?? 0 > 5, "build number stays above the private 0.3.2 (5) build")
+    expect(info?["CFBundleShortVersionString"] as? String == "0.1.1", "release version is v0.1.1")
+    expect(Int(info?["CFBundleVersion"] as? String ?? "") ?? 0 > 6, "build number stays above v0.1.0 (6) and the private 0.3.2 (5) build")
     expect(info?["CFBundleIdentifier"] as? String == "local.notchisland.app", "bundle ID unchanged, so existing settings and Keychain items are kept")
     let providers = try String(contentsOfFile: "Sources/NotchIsland/Providers.swift", encoding: .utf8)
     expect(providers.contains("\"NotchIsland/0.1 (macOS)\""), "User-Agent uses the release series")

@@ -95,7 +95,8 @@ enum L10nKey: CaseIterable {
     case playbackPosition, seekFailed
     case back, toastCaptureBusy, screenshotOpenSystem, screenshotToolbarFailed
     case shazamSystemOpen, shazamSystemUnavailable, shazamShortcut, shazamShortcutName, shazamShortcutHelp
-    case shazamShortcutRun, shazamShortcutGallery, shazamShortcutRunning, shazamShortcutFinished, shazamShortcutFailed
+    case shazamShortcutRun, shazamShortcutRunning, shazamShortcutFinished, shazamShortcutFailed
+    case recognitionSettings, recognitionSystem, recognitionThirdParty, recognitionSettingsHelp
     case audDTitle, audDDisclosure, audDToken, audDTrial, audDPreparing, audDListening, audDSending
     case audDCancelled, audDNoAudio, audDMissingToken, audDNoMatch
     case captureToolRefused, captureToolNoImage, captureToolFailed, captureAdviceStaleGrant, captureAdviceNotGranted, captureAdviceUnknown
@@ -104,7 +105,15 @@ enum L10nKey: CaseIterable {
     case shazamSystemListening, shazamSystemUncertain, shazamSystemNeedsAX, shazamSystemMissing
     case audDSummary, audDUploadSystem, audDUploadMic, audDSetup, audDNeedsConsent, audDReady, audDNetwork, audDInvalidToken
     case audDLimit, audDServiceError, audDBadResponse, audDSetupTitle, audDConsentCheck, audDTokenReplace, audDTokenStored
-    case audDTokenNone, audDSave, audDRemoveToken, audDTokenRejected
+    case audDTokenNone, audDSave, audDRemoveToken, audDTokenRejected, audDTokenRemovalFailed, audDStartHint
+    case audDMicUnavailable, audDSystemUnavailable
+    // 0.1.1
+    case permPromptedHint, permOpenedSettingsHint, permCouldNotOpen
+    case pasteboardAsks, pasteboardAllowed, pasteboardDenied, pasteboardAsksShort, pasteboardDeniedShort
+    case shazamShortcutStop, shazamShortcutNotFound, shazamShortcutStopped, shazamShortcutTimedOut, shazamShortcutOpen, shazamSystemNotExposed
+    case powerChargingToast, powerConnectedToast, lowBatteryTitle, lowBatteryRemaining, lowPowerModeOn, lowPowerModeButton, lowPowerModeHelp
+    case powerAlertsToggle, powerAlertsNote
+    case audDNotSelected, shazamShortcutResult
 }
 
 @MainActor
@@ -383,7 +392,11 @@ final class LanguageSettings: ObservableObject {
         .qaClipboard: ("Clipboard", "剪貼簿", "剪贴板"),
         .qaScreenshot: ("Screenshot", "截圖", "截图"),
         .qaScreenRecord: ("Record", "錄影", "录屏"),
-        .qaShazam: ("Shazam", "Shazam", "Shazam"),
+        .qaShazam: ("Music Recognition", "音樂辨識", "音乐识别"),
+        .recognitionSettings: ("Music Recognition", "音樂辨識", "音乐识别"),
+        .recognitionSystem: ("macOS Recognize Music", "macOS 辨識音樂", "macOS 识别音乐"),
+        .recognitionThirdParty: ("Third-party API (AudD)", "第三方 API（AudD）", "第三方 API（AudD）"),
+        .recognitionSettingsHelp: ("macOS uses Control Center and shows results there. For AudD, configure your token here. AudD receives a clip only after you consent and click Upload.", "macOS 透過控制中心辨識，結果也在控制中心。使用 AudD 時可在這裡設定金鑰。同意後還需按下「上傳」，AudD 才會收到片段。", "macOS 通过控制中心识别，结果也在控制中心。使用 AudD 时可在此设置密钥。同意后还需点按“上传”，AudD 才会收到片段。"),
         .close: ("Close", "關閉", "关闭"),
         .cancel: ("Cancel", "取消", "取消"),
         .toastCopied: ("Copied", "已複製", "已复制"),
@@ -397,7 +410,7 @@ final class LanguageSettings: ObservableObject {
         .screenshotOpenSystem: ("Open Screenshot", "開啟「截圖」", "打开“截图”"),
         .screenshotToolbarFailed: ("Couldn’t open Screenshot. Press Control–Shift–Command–4, then select the area to copy.", "無法開啟「截圖」。按下 Control–Shift–Command–4，再框選要複製的範圍。", "无法打开“截图”。按下 Control–Shift–Command–4，再框选要复制的范围。"),
         .recordToolbarFailed: ("Couldn’t open Screenshot. Press Shift-Command-5 to open its recording controls.", "無法開啟「截圖」。按下 ⇧⌘5 可開啟錄影工具列。", "无法打开“截图”。按下 ⇧⌘5 可打开录屏工具栏。"),
-        .pasteNeedsPermission: ("Copied. To paste automatically into the app you were using, allow Notch Island to send keystrokes (System Settings › Privacy & Security › Accessibility); otherwise press ⌘V.", "已複製。若要自動貼到原本使用的 App，請允許瀏海島傳送按鍵（系統設定 › 隱私權與安全性 › 輔助使用）；否則請按 ⌘V。", "已复制。若要自动粘贴到原来使用的 App，请允许刘海岛发送按键（系统设置 › 隐私与安全 › 辅助功能）；否则请按 ⌘V。"),
+        .pasteNeedsPermission: ("Copied. To paste automatically into the app you were using, allow Notch Island to send keystrokes: press Allow… or Open Settings (Privacy & Security › Accessibility). Otherwise press ⌘V.", "已複製。若要自動貼到原本使用的 App，請允許瀏海島傳送按鍵：按「允許…」或「打開設定」（隱私權與安全性 › 輔助使用）。否則請按 ⌘V。", "已复制。若要自动粘贴到原来使用的 App，请允许刘海岛发送按键：点按“允许…”或“打开设置”（隐私与安全 › 辅助功能）。否则请按 ⌘V。"),
         .pasteAllowed: ("Clicking an item pastes it into the app you were using.", "點一下紀錄會貼到原本使用的 App。", "点一下记录会粘贴到原来使用的 App。"),
         .clipboardClear: ("Clear history", "清除紀錄", "清除记录"),
         .clipboardClearConfirm: ("Clear all?", "全部清除？", "全部清除？"),
@@ -436,23 +449,24 @@ final class LanguageSettings: ObservableObject {
         .shazamRetrying: ("Catalog returned error 202 — still retrying.", "曲庫回報錯誤 202，仍在重試。", "曲库返回错误 202，仍在重试。"),
         .shazamShortcut: ("Shazam Shortcut…", "Shazam 捷徑…", "Shazam 快捷指令…"),
         .shazamShortcutName: ("Exact shortcut name", "捷徑的完整名稱", "快捷指令的完整名称"),
-        .shazamShortcutHelp: ("Enter the name of your Shazam shortcut. If needed, add one from the Shortcuts Gallery first. Shortcuts handles the audio and cancellation. Add a text output to see the song here.", "輸入你的 Shazam 捷徑名稱。若還沒有，先從「捷徑」的捷徑資料庫加入。音訊與停止由「捷徑」處理。加入文字輸出後即可在此查看曲名。", "输入你的 Shazam 快捷指令名称。如还没有，先从“快捷指令”的快捷指令中心添加。音频与停止由“快捷指令”处理。添加文本输出后可在这里查看曲名。"),
+        .shazamShortcutHelp: ("Enter the exact name of a shortcut that recognizes music and returns text. In Shortcuts, create a shortcut, add Shazam’s music recognition action, then use Stop and Output to return the song as text. Shortcuts may ask for microphone access.", "請輸入會辨識音樂並傳回文字的捷徑完整名稱。在「捷徑」建立新捷徑，加入 Shazam 的音樂辨識動作，再用「停止並輸出」傳回曲名文字。「捷徑」可能會要求麥克風權限。", "请输入能识别音乐并返回文本的快捷指令完整名称。在“快捷指令”新建快捷指令，添加 Shazam 的音乐识别操作，再用“停止并输出”返回歌曲文本。“快捷指令”可能会请求麦克风权限。"),
         .shazamShortcutRun: ("Run Shortcut", "執行捷徑", "运行快捷指令"),
-        .shazamShortcutGallery: ("Open Gallery", "開啟捷徑資料庫", "打开快捷指令中心"),
         .shazamShortcutRunning: ("Running in Shortcuts… Use Shortcuts to stop it.", "捷徑正在執行，可在「捷徑」停止。", "快捷指令正在运行，可在“快捷指令”停止。"),
         .shazamShortcutFinished: ("The shortcut finished without text output. Check Shortcuts for its result.", "捷徑已完成，沒有傳回文字。請在「捷徑」查看結果。", "快捷指令已完成，未返回文本。请在“快捷指令”查看结果。"),
         .shazamShortcutFailed: ("The shortcut failed or was cancelled. Check its name and actions in Shortcuts.", "捷徑失敗或已取消。請在「捷徑」確認名稱與動作。", "快捷指令失败或已取消。请在“快捷指令”检查名称和操作。"),
         .audDTrial: ("Trial and pricing", "試用與費用", "试用与费用"),
         .audDPreparing: ("Preparing the selected source…", "正在準備選定的音源…", "正在准备选定的音源…"),
+        .audDMicUnavailable: ("Couldn’t start the microphone. Check the input in System Settings › Sound.", "無法啟動麥克風。請在「系統設定」›「聲音」檢查輸入裝置。", "无法启动麦克风。请在“系统设置”›“声音”检查输入设备。"),
+        .audDSystemUnavailable: ("Couldn’t start Mac audio capture. Check the sound output and Notch Island’s Screen & System Audio Recording permission.", "無法開始擷取 Mac 聲音。請檢查音訊輸出，以及瀏海島的「螢幕與系統錄音」權限。", "无法开始捕获 Mac 声音。请检查音频输出，以及刘海岛的“录屏与系统录音”权限。"),
         .audDSending: ("Sending the clip to AudD…", "正在把音訊片段傳給 AudD…", "正在向 AudD 发送音频片段…"),
         .audDNoAudio: ("Couldn’t capture at least 3 s of sound from this source; nothing was uploaded (silence is never sent).", "無法從這個音源取得至少 3 秒的聲音，沒有上傳任何內容（靜音不會送出）。", "无法从此音源获取至少 3 秒的声音，没有上传任何内容（静音不会发送）。"),
         .shazamSystemOpen: ("Recognize with macOS", "用 macOS 辨識音樂", "用 macOS 识别音乐"),
-        .shazamSystemFallback: ("“Recognize with macOS” presses Recognize Music in Control Center for you (needs Accessibility). macOS listens and shows the result in Control Center; it doesn't come back to Notch Island.", "「用 macOS 辨識音樂」會替你按下控制中心的「辨識音樂」（需要輔助使用權限）。由 macOS 聆聽，結果顯示在控制中心，不會回到瀏海島。", "“用 macOS 识别音乐”会替你点按控制中心的“识别音乐”（需要辅助功能权限）。由 macOS 聆听，结果显示在控制中心，不会回到刘海岛。"),
-        .shazamSystemUnavailable: ("Couldn’t press Recognize Music in Control Center. Open Control Center › Recognize Music yourself, or try a Shortcut.", "無法替你按下控制中心的「辨識音樂」。請自行打開「控制中心」›「辨識音樂」，或改用捷徑。", "无法替你点按控制中心的“识别音乐”。请自行打开“控制中心”›“识别音乐”，或改用快捷指令。"),
+        .shazamSystemFallback: ("Notch Island can try the macOS control using Accessibility. To start it yourself, open Control Center › Recognize Music and click Recognize Music again. Look there for the result.", "瀏海島可透過輔助使用嘗試操作。若要手動開始，請開啟「控制中心」›「辨識音樂」，再按一次「辨識音樂」。結果會顯示在控制中心。", "刘海岛可通过辅助功能尝试操作。若要手动开始，请打开“控制中心”›“识别音乐”，再点按一次“识别音乐”。结果会显示在控制中心。"),
+        .shazamSystemUnavailable: ("Couldn’t start Music Recognition. Open Control Center › Recognize Music, then click Recognize Music again. Check Control Center for the result.", "無法啟動音樂辨識。請開啟「控制中心」›「辨識音樂」，再按一次「辨識音樂」。請在控制中心查看結果。", "无法启动音乐识别。请打开“控制中心”›“识别音乐”，再点按一次“识别音乐”。请在控制中心查看结果。"),
         .shazamSystemListening: ("macOS is listening (Control Center shows “Listening…”). The result appears in Control Center and doesn't come back to Notch Island.", "macOS 正在聆聽（控制中心顯示「聆聽中」）。結果會顯示在控制中心，不會回到瀏海島。", "macOS 正在聆听（控制中心显示“正在听取”）。结果会显示在控制中心，不会回到刘海岛。"),
-        .shazamSystemUncertain: ("Recognize Music was pressed, but Notch Island couldn't confirm that macOS started listening. Check Control Center.", "已按下「辨識音樂」，但瀏海島無法確認 macOS 已開始聆聽。請查看控制中心。", "已点按“识别音乐”，但刘海岛无法确认 macOS 已开始聆听。请查看控制中心。"),
-        .shazamSystemNeedsAX: ("To press Recognize Music for you, allow Notch Island under Privacy & Security › Accessibility. Nothing is granted automatically.", "要替你按下「辨識音樂」，需在「隱私權與安全性」›「輔助使用」允許瀏海島。不會自動授權。", "要替你点按“识别音乐”，需在“隐私与安全”›“辅助功能”允许刘海岛。不会自动授权。"),
-        .shazamSystemMissing: ("Recognize Music isn't in Control Center. Add it under System Settings › Control Center (or Control Center › Edit Controls), then try again.", "控制中心沒有「辨識音樂」。請到「系統設定」›「控制中心」（或控制中心的「編輯控制項目」）加入後再試。", "控制中心没有“识别音乐”。请到“系统设置”›“控制中心”（或控制中心的“编辑控制”）添加后再试。"),
+        .shazamSystemUncertain: ("Couldn’t confirm whether macOS started listening. Open Control Center › Recognize Music and check its status before trying again.", "無法確認 macOS 是否已開始聆聽。請開啟「控制中心」›「辨識音樂」，確認狀態後再試。", "无法确认 macOS 是否已开始聆听。请打开“控制中心”›“识别音乐”，确认状态后再试。"),
+        .shazamSystemNeedsAX: ("To start manually, open Control Center › Recognize Music and click Recognize Music again. To let Notch Island try, enable it in System Settings › Privacy & Security › Accessibility.", "手動開始請開啟「控制中心」›「辨識音樂」，再按一次「辨識音樂」。若要讓瀏海島代為嘗試，可到「系統設定」›「隱私權與安全性」›「輔助使用」允許瀏海島。", "手动开始请打开“控制中心”›“识别音乐”，再点按一次“识别音乐”。若要让刘海岛代为尝试，可前往“系统设置”›“隐私与安全”›“辅助功能”允许刘海岛。"),
+        .shazamSystemMissing: ("Couldn’t find the Recognize Music control. To add it, open Control Center › Edit Controls › Sounds › Recognize Music. On older macOS versions, look in System Settings › Control Center.", "找不到「辨識音樂」控制項。請到「控制中心」›「編輯控制項目」›「聲音」加入「辨識音樂」。較舊版本請到「系統設定」›「控制中心」。", "找不到“识别音乐”控制项。请前往“控制中心”›“编辑控制”›“声音”添加“识别音乐”。较早版本请前往“系统设置”›“控制中心”。"),
         .recordToolbarHelp: ("Opens the macOS recording toolbar in video mode. Nothing records until you click Record.", "開啟 macOS 錄影工具列（已切到錄影模式）。按下「錄製」前不會開始錄影。", "打开 macOS 录屏工具栏（已切到录屏模式）。点按“录制”前不会开始录制。"),
         .captureToolRefused: ("The macOS capture tool reported that capturing isn't allowed.", "macOS 擷取工具回報「不允許擷取」。", "macOS 捕获工具报告“不允许捕获”。"),
         .captureToolNoImage: ("The macOS capture tool reported that it couldn't read the screen.", "macOS 擷取工具回報無法讀取畫面。", "macOS 捕获工具报告无法读取屏幕。"),
@@ -484,6 +498,8 @@ final class LanguageSettings: ObservableObject {
         .audDSave: ("Save", "儲存", "保存"),
         .audDRemoveToken: ("Remove Token", "移除金鑰", "移除密钥"),
         .audDTokenRejected: ("The token wasn't saved: it must be a single word without spaces, or Keychain refused it.", "金鑰未儲存：必須是不含空白的一段文字，或鑰匙圈拒絕寫入。", "密钥未保存：必须是不含空格的一段文字，或钥匙串拒绝写入。"),
+        .audDTokenRemovalFailed: ("Keychain couldn’t remove the AudD token. Unlock Keychain and try again.", "鑰匙圈無法移除 AudD 金鑰。請解鎖鑰匙圈後再試。", "钥匙串无法移除 AudD 密钥。请解锁钥匙串后重试。"),
+        .audDStartHint: ("Choose an audio source to check your token and start recognition.", "選擇音源後，瀏海島會先檢查金鑰，再開始辨識。", "选择音源后，刘海岛会先检查密钥，再开始识别。"),
         .audDNeedsConsent: ("Read Privacy & Token… and agree before anything is uploaded.", "上傳前請先閱讀「隱私與金鑰…」並同意。", "上传前请先阅读“隐私与密钥…”并同意。"),
         .audDMissingToken: ("Save your own AudD token under Privacy & Token… first.", "請先在「隱私與金鑰…」儲存你自己的 AudD 金鑰。", "请先在“隐私与密钥…”保存你自己的 AudD 密钥。"),
         .audDReady: ("Ready. Nothing is recorded until you click Upload.", "已就緒。按下「上傳」前不會錄音。", "已就绪。点按“上传”前不会录音。"),
@@ -562,5 +578,30 @@ final class LanguageSettings: ObservableObject {
         .browserNeedsAutomation: ("Allow Notch Island to control %@ to show YouTube playback (Settings › Browser media).", "允許瀏海島控制 %@ 才能顯示 YouTube 播放（設定 › 瀏覽器媒體）。", "允许刘海岛控制 %@ 才能显示 YouTube 播放（设置 › 浏览器媒体）。"),
         .weatherUseLocation: ("Click to use your approximate location, or choose a city in Settings.", "點一下使用概略位置，或在設定中選擇城市。", "点一下使用大致位置，或在设置中选择城市。"),
         .chooseCityInstead: ("Choose a city in Settings instead.", "也可以改在設定中選擇城市。", "也可以改在设置中选择城市。"),
+        .permPromptedHint: ("macOS was asked. If no system window appeared (macOS asks only once per app), press “Open Settings” and turn on Notch Island under Accessibility.", "已向 macOS 請求。若沒有出現系統視窗（macOS 對同一個 App 只詢問一次），請按「打開設定」，在「輔助使用」中開啟瀏海島。", "已向 macOS 请求。若没有出现系统窗口（macOS 对同一个 App 只询问一次），请点按“打开设置”，在“辅助功能”中开启刘海岛。"),
+        .permOpenedSettingsHint: ("System Settings › Privacy & Security › Accessibility is open. Turn on Notch Island there (use + to add it if it isn't listed). This page updates by itself.", "已打開「系統設定 › 隱私權與安全性 › 輔助使用」。請在那裡開啟瀏海島（未列出時按 + 加入）。此頁會自動更新狀態。", "已打开“系统设置 › 隐私与安全 › 辅助功能”。请在那里开启刘海岛（未列出时点按 + 添加）。此页会自动更新状态。"),
+        .permCouldNotOpen: ("Couldn't open System Settings. Open it yourself: Privacy & Security › Accessibility.", "無法打開系統設定。請自行前往「隱私權與安全性 › 輔助使用」。", "无法打开系统设置。请自行前往“隐私与安全 › 辅助功能”。"),
+        .pasteboardAsks: ("macOS asks before Notch Island reads what other apps copied. To record history without those prompts, choose Allow for Notch Island under Privacy & Security › Paste from Other Apps (it may take effect after reopening Notch Island).", "macOS 會在瀏海島讀取其他 App 複製的內容前詢問。若要記錄剪貼簿而不被詢問，請在「隱私權與安全性 › 從其他App貼上」將瀏海島設為「允許」（可能需重新開啟瀏海島才生效）。", "macOS 会在刘海岛读取其他 App 拷贝的内容前询问。若要记录剪贴板而不被询问，请在“隐私与安全 › 从其他App粘贴”将刘海岛设为“允许”（可能需重新打开刘海岛才生效）。"),
+        .pasteboardAllowed: ("Paste from Other Apps: allowed.", "從其他App貼上：已允許。", "从其他App粘贴：已允许。"),
+        .pasteboardDenied: ("Paste from Other Apps is set to Deny, so clipboard history can't read new copies. Change it under Privacy & Security › Paste from Other Apps.", "「從其他App貼上」已設為拒絕，剪貼簿紀錄無法讀取新的內容。可在「隱私權與安全性 › 從其他App貼上」更改。", "“从其他App粘贴”已设为拒绝，剪贴板记录无法读取新的内容。可在“隐私与安全 › 从其他App粘贴”更改。"),
+        .pasteboardAsksShort: ("macOS asks before each read. Allow under Paste from Other Apps.", "macOS 每次讀取前會詢問，可在「從其他App貼上」允許。", "macOS 每次读取前会询问，可在“从其他App粘贴”允许。"),
+        .pasteboardDeniedShort: ("Paste from Other Apps is denied: new copies aren't recorded.", "「從其他App貼上」已拒絕：不會記錄新內容。", "“从其他App粘贴”已拒绝：不会记录新内容。"),
+        .shazamShortcutStop: ("Stop Shortcut", "停止捷徑", "停止快捷指令"),
+        .audDNotSelected: ("AudD isn’t selected. To use it, choose Third-party API (AudD) in Notch Island Settings › Music Recognition. Nothing was recorded or uploaded.", "尚未選擇 AudD。若要使用，請到「瀏海島設定」›「音樂辨識」選擇「第三方 API（AudD）」。沒有錄音，也沒有上傳任何內容。", "尚未选择 AudD。若要使用，请前往“刘海岛设置”›“音乐识别”选择“第三方 API（AudD）”。没有录音，也没有上传任何内容。"),
+        .shazamShortcutResult: ("Your shortcut returned: %@", "你的捷徑傳回：%@", "你的快捷指令返回：%@"),
+        .shazamShortcutNotFound: ("Shortcuts has no shortcut named “%@”. Check the exact name, or create one with “Create Shortcut”.", "「捷徑」找不到名為「%@」的捷徑。請確認完整名稱，或用「建立捷徑」新增。", "“快捷指令”找不到名为“%@”的快捷指令。请确认完整名称，或用“新建快捷指令”添加。"),
+        .shazamShortcutStopped: ("Stopped waiting for the shortcut. If Shortcuts still shows it running, stop it there.", "已停止等待捷徑。若「捷徑」仍顯示執行中，請在「捷徑」中停止。", "已停止等待快捷指令。若“快捷指令”仍显示正在运行，请在“快捷指令”中停止。"),
+        .shazamShortcutTimedOut: ("The shortcut didn't finish within 90 seconds, so Notch Island stopped waiting. Check Shortcuts.", "捷徑 90 秒內沒有完成，瀏海島已停止等待。請查看「捷徑」。", "快捷指令 90 秒内没有完成，刘海岛已停止等待。请查看“快捷指令”。"),
+        .shazamShortcutOpen: ("Open Shortcuts", "開啟「捷徑」", "打开“快捷指令”"),
+        .shazamSystemNotExposed: ("Couldn’t access Control Center’s menu bar items using Accessibility. Open Control Center › Recognize Music and click Recognize Music again. Check Control Center for the result.", "輔助使用無法讀取控制中心的選單列項目。請開啟「控制中心」›「辨識音樂」，再按一次「辨識音樂」。請在控制中心查看結果。", "辅助功能无法读取控制中心的菜单栏项目。请打开“控制中心”›“识别音乐”，再点按一次“识别音乐”。请在控制中心查看结果。"),
+        .powerChargingToast: ("Charging, %@ percent", "充電中，%@%", "充电中，%@%"),
+        .powerConnectedToast: ("Power connected, %@ percent", "已接上電源，%@%", "已接通电源，%@%"),
+        .lowBatteryTitle: ("Low Battery", "電量不足", "电量不足"),
+        .lowBatteryRemaining: ("%@% battery remaining", "剩餘 %@% 電量", "剩余 %@% 电量"),
+        .lowPowerModeOn: ("Low Power Mode on", "低耗電模式已開啟", "低电量模式已开启"),
+        .lowPowerModeButton: ("Low Power Mode…", "低耗電模式…", "低电量模式…"),
+        .lowPowerModeHelp: ("Opens System Settings › Battery, where you can turn on Low Power Mode. macOS doesn't let apps switch it.", "打開「系統設定 › 電池」，由你在那裡開啟低耗電模式。macOS 不提供 App 直接切換的方式。", "打开“系统设置 › 电池”，由你在那里开启低电量模式。macOS 不提供 App 直接切换的方式。"),
+        .powerAlertsToggle: ("Charging and low-battery alerts", "充電與低電量提醒", "充电与低电量提醒"),
+        .powerAlertsNote: ("Shows the level briefly when a charger is connected, and a low-battery card at 20% and 10% (once each, until the battery is back above). Read locally from macOS; no permission needed. Low Power Mode is turned on in System Settings › Battery.", "接上充電器時短暫顯示電量；電量降到 20% 與 10% 時各顯示一次低電量卡片（電量回升後才會再次提醒）。資料由 macOS 在本機提供，不需要權限。低耗電模式需在「系統設定 › 電池」開啟。", "接通充电器时短暂显示电量；电量降到 20% 与 10% 时各显示一次低电量卡片（电量回升后才会再次提醒）。数据由 macOS 在本机提供，不需要权限。低电量模式需在“系统设置 › 电池”开启。"),
     ]
 }

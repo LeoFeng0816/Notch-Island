@@ -184,9 +184,7 @@ enum SystemMedia {
     static func requestPostEventAccess() -> Bool { CGRequestPostEventAccess() }
 
     static func openAccessibilitySettings() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-            NSWorkspace.shared.open(url)
-        }
+        SystemSettingsLink.open(.accessibility)
     }
 
     /// Builds the key-down/key-up pair (separate for tests; nothing is posted).

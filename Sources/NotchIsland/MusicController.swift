@@ -60,6 +60,14 @@ final class MusicController: ObservableObject {
     private var browserVideoID: String?
     private var trackTransition = BrowserMedia.TrackTransition()
     private var timeResolver = BrowserMedia.TimeResolver()
+    /// Whose timelines `timeResolver` remembers ("chrome|<window>/<tab>|youtubeMusic").
+    private var resolverOwner: String?
+
+    /// One time resolver per playing tab; any other source starts fresh.
+    nonisolated static func timelineOwner(source: Source, tab: (ref: String, site: BrowserMedia.Site)?) -> String {
+        guard source.browser != nil, let tab else { return source.rawValue }
+        return "\(source.rawValue)|\(tab.ref)|\(tab.site.rawValue)"
+    }
     /// Site of the current browser source (nil for Music/Spotify).
     @Published private(set) var browserSite: BrowserMedia.Site?
     /// Per-browser problems found during the last scan (shown as onboarding hints).
@@ -289,9 +297,7 @@ final class MusicController: ObservableObject {
     func previousTrack() { control(.previous) }
 
     func openAutomationSettings() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") {
-            NSWorkspace.shared.open(url)
-        }
+        SystemSettingsLink.open(.automation)
     }
 
     var canSeek: Bool {
@@ -741,6 +747,9 @@ final class MusicController: ObservableObject {
         DispatchQueue.main.async { [weak self] in MainActor.assumeIsolated { self?.refresh() } }
     }
 
+    /// Offline tests feed synthetic observations through the real state path.
+    func applyForTesting(_ snapshot: Snapshot?) { apply(snapshot) }
+
     private func apply(_ snapshot: Snapshot?) {
         guard let snapshot else {
             tracker.cancel()
@@ -753,8 +762,10 @@ final class MusicController: ObservableObject {
             position = nil
             if !trackIdentity.isEmpty { trackIdentity = "" }
             browserVideoID = nil
-            trackTransition = .init()
-            timeResolver = .init()
+            // Keep the time resolver's memory: during a song change the page can
+            // briefly report no metadata, so a scan finds nothing. Forgetting the
+            // previous song's timeline here let its time be shown on the next song.
+            // It is reset when a different tab (or a non-browser source) shows up.
             artworkKey = nil
             browserTab = nil
             artworkURL = nil
@@ -770,17 +781,17 @@ final class MusicController: ObservableObject {
         _ = tracker.observe(isPlaying: snapshot.isPlaying, trackKey: trackKey, sampledAt: snapshot.sampledAt, now: Date(),
                             position: snapshot.position)
         publishTracker()
+        let timelineOwner = Self.timelineOwner(source: snapshot.source, tab: snapshot.browserTab)
+        if timelineOwner != resolverOwner {
+            resolverOwner = timelineOwner
+            trackTransition = .init()
+            timeResolver = .init()
+        }
         if let browser = snapshot.source.browser, let tab = snapshot.browserTab {
-            if browserTab?.0 != browser || browserTab?.1 != tab.ref || browserTab?.2 != tab.site {
-                trackTransition = .init()
-                timeResolver = .init()
-            }
             browserTab = (browser, tab.ref, tab.site)
             if browserSite != tab.site { browserSite = tab.site }
         } else {
             browserTab = nil
-            trackTransition = .init()
-            timeResolver = .init()
             if browserSite != nil { browserSite = nil }
         }
         let changedTrack = trackIdentity != trackKey
@@ -797,7 +808,8 @@ final class MusicController: ObservableObject {
             // Several page time sources: show a time only when it clearly belongs to this item.
             let resolved = timeResolver.resolve(item: trackKey, samples: samples, isPlaying: snapshot.isPlaying, at: snapshot.sampledAt)
             newPosition = resolved?.0.position
-            if let resolved { newTrack.duration = resolved.0.duration }
+            // While hidden, don't keep a length that may be the previous song's.
+            newTrack.duration = resolved?.0.duration
         } else if snapshot.browserTab != nil {
             newPosition = trackTransition.position(item: trackKey, value: snapshot.position,
                                                    duration: snapshot.track.duration, at: snapshot.sampledAt)

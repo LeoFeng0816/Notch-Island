@@ -40,6 +40,7 @@ final class IslandController {
     let audioMonitor = AudioLevelMonitor()
     let clipboard = ClipboardStore()
     let shazam = ShazamRecognizer()
+    let audd = AudDRecognition()
     /// The app that was in front before the island was used — where a chosen
     /// clipboard item is pasted. The island never becomes frontmost itself.
     private var pasteTarget: NSRunningApplication?
@@ -62,6 +63,8 @@ final class IslandController {
     let device = DeviceInfo.detect()
     let lang = LanguageSettings.shared
     let model: IslandViewModel
+    /// Charger / low-battery moments on the island (local IOKit readings only).
+    let power: PowerAlertController
     private var settingsWindow: SettingsWindowController?
     /// Preview/screenshot aid (`--stay-expanded`): don't collapse when the pointer leaves.
     var pinExpanded = false
@@ -79,6 +82,7 @@ final class IslandController {
         let screen = NotchGeometry.preferredScreen() ?? NSScreen.screens[0]
         model = IslandViewModel(geometry: NotchGeometry(screen: screen), timer: timer, music: music, stopwatch: stopwatch)
         widgetData = WidgetDataCenter(settings: widgetSettings)
+        power = PowerAlertController(model: model)
         model.onOpenSettings = { [weak self] in self?.openSettings() }
         model.onUseCurrentLocation = { [weak self] in self?.useCurrentLocationForWeather() }
         model.onScreenshot = { [weak self] in self?.takeScreenshot() }
@@ -98,14 +102,18 @@ final class IslandController {
         installMouseMonitors()
         widgetData.start()
 
-        // Battery is read locally (IOKit); only observe it while the widget is on.
-        widgetSettings.$enabled
-            .map { $0.contains(.battery) }
+        // Battery is read locally (IOKit); only observe it while the widget or power alerts are on.
+        Publishers.CombineLatest(widgetSettings.$enabled.map { $0.contains(.battery) }, power.$enabled)
+            .map { $0 || $1 }
             .removeDuplicates()
             .sink { [weak self] on in
                 guard let self else { return }
                 on ? self.battery.start() : self.battery.stop()
             }
+            .store(in: &cancellables)
+        battery.$status
+            .removeDuplicates()
+            .sink { [weak self] status in self?.power.handle(status) }
             .store(in: &cancellables)
         // Calendar: EventKit is only touched while the widget is on (no prompt here).
         Publishers.CombineLatest3(widgetSettings.$enabled.map { $0.contains(.calendar) },
@@ -152,6 +160,7 @@ final class IslandController {
             pasteTarget = front
         }
         if !expanded, shazam.isListening { shazam.cancel() } // never keep listening once the island is closed
+        if !expanded { audd.cancel() }
         hoverWork?.cancel(); hoverWork = nil
         collapseWork?.cancel(); collapseWork = nil
         model.isHovering = false
@@ -360,7 +369,7 @@ final class IslandController {
                 AnyView(SettingsView(lang: self.lang, settings: self.widgetSettings, model: self.model,
                                      music: self.music, calendar: self.calendar, location: self.location,
                                      audioMonitor: self.audioMonitor, stockSearch: self.stockSearch,
-                                     clipboard: self.clipboard,
+                                     clipboard: self.clipboard, power: self.power, audDRecognition: self.audd,
                                      useCurrentLocation: { [weak self] in self?.useCurrentLocationForWeather() },
                                      device: self.device,
                                      weatherProvider: OpenMeteoProvider(client: URLSessionHTTPClient()),
@@ -383,7 +392,7 @@ final class IslandController {
             let root = IslandRootView(model: model, timer: timer, music: music, lang: lang,
                                       stopwatch: stopwatch, battery: battery, data: widgetData, settings: widgetSettings,
                                       calendar: calendar, location: location, audioMonitor: audioMonitor,
-                                      clipboard: clipboard, shazam: shazam)
+                                      clipboard: clipboard, shazam: shazam, audd: audd)
             let hosting = FirstMouseHostingView(rootView: root)
             hosting.sizingOptions = []
             panel.contentView = hosting
@@ -453,6 +462,7 @@ final class IslandController {
                 DispatchQueue.main.asyncAfter(deadline: .now() + Self.collapseDelay, execute: work)
             }
         case .idle, .compact:
+            model.pointerOnBanner = model.bannerContains(point)
             let inside = isHoverTarget(point, mode: mode)
             if model.isHovering != inside { model.isHovering = inside }
             if inside {

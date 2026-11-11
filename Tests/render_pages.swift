@@ -24,8 +24,13 @@ final class RenderMock: URLProtocol {
     func end() {}
 }
 
-@MainActor func render<V: View>(_ view: V, _ name: String, out: URL) {
-    let framed = view.frame(width: 540, height: 210).padding(20).background(Color.black).environment(\.colorScheme, .dark)
+/// Answers every request with an error: the widget renders its offline state.
+final class OfflineHTTP: HTTPClient, @unchecked Sendable {
+    func get(_ url: URL) async throws -> (Data, Int) { throw URLError(.notConnectedToInternet) }
+}
+
+@MainActor func render<V: View>(_ view: V, _ name: String, out: URL, size: CGSize = CGSize(width: 540, height: 210)) {
+    let framed = view.frame(width: size.width, height: size.height).padding(20).background(Color.black).environment(\.colorScheme, .dark)
     let renderer = ImageRenderer(content: framed)
     renderer.scale = 2
     guard let image = renderer.nsImage, let tiff = image.tiffRepresentation,
@@ -48,16 +53,51 @@ final class RenderMock: URLProtocol {
                                 timer: CountdownTimer(defaults: defaults), music: MusicController(defaults: defaults), stopwatch: Stopwatch(defaults: defaults))
     let shazam = ShazamRecognizer()
     let session = AudDService.makeSession(protocolClasses: [RenderMock.self])
+    // 0.1.1 layout: four widget cards + quick actions in the 560 pt island (synthetic data,
+    // memory-only secrets, calendar "not asked" — nothing real is read).
+    let widgetSettings = WidgetSettings(defaults: defaults, secrets: MemorySecretStore())
+    for kind in widgetSettings.order where widgetSettings.enabled.count < 4 { _ = widgetSettings.setEnabled(kind, true) }
+    let battery = BatteryMonitor()
+    func widgetsPage() -> some View {
+        VStack(spacing: 6) {
+            WidgetsPage(model: model, lang: lang)
+            QuickActionsBar(model: model, lang: lang)
+        }
+        .padding(.horizontal, IslandViewModel.widgetsHorizontalPadding)
+        .padding(.top, 6).padding(.bottom, 14)
+        .frame(width: IslandViewModel.expandedWidth, height: IslandViewModel.widgetsContentHeight - 32)
+        .environmentObject(model).environmentObject(widgetSettings).environmentObject(battery)
+        .environmentObject(WidgetDataCenter(settings: widgetSettings, client: OfflineHTTP()))
+        .environmentObject(CalendarStore(statusProvider: { .notDetermined })).environmentObject(LocationProvider())
+        .environmentObject(model.stopwatch).environmentObject(model.timer)
+    }
     for (language, code) in [(AppLanguage.english, "en"), (.traditionalChinese, "zh-Hant"), (.simplifiedChinese, "zh-Hans")] {
         lang.language = language
+        render(widgetsPage(), "\(code)-widgets-560", out: out, size: CGSize(width: IslandViewModel.expandedWidth, height: IslandViewModel.widgetsContentHeight - 32))
+        for percent in [20, 10] {
+            let banner = PowerBannerView(banner: IslandBanner(kind: .lowBattery(percent: percent)), model: model, lang: lang)
+                .frame(width: IslandViewModel.bannerWidth, height: IslandViewModel.bannerHeight)
+                .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Color.black))
+                .environmentObject(battery)
+            render(banner, "\(code)-low-battery-\(percent)", out: out, size: CGSize(width: IslandViewModel.bannerWidth, height: IslandViewModel.bannerHeight))
+        }
+        let toast = HStack { ToastLeading(toast: .init(symbol: "bolt.fill", text: "82%", style: .success)); Spacer(); ToastTrailing(toast: .init(symbol: "bolt.fill", text: "82%", style: .success)) }
+            .padding(.horizontal, 10).frame(width: 185 + 2 * IslandViewModel.compactSideWidth, height: 32)
+        render(toast, "\(code)-charging-toast", out: out, size: CGSize(width: 185 + 2 * IslandViewModel.compactSideWidth, height: 32))
         render(QuickActionsBar(model: model, lang: lang), "\(code)-quick-actions", out: out)
         let statuses: [(ControlCenterMedia.MusicRecognitionResult?, String)] = [(nil, "idle"), (.listening, "listening"), (.uncertain, "uncertain"),
-                                                                              (.permissionNeeded, "needs-ax"), (.notInControlCenter, "missing")]
+                                                                              (.permissionNeeded, "needs-ax"), (.notInControlCenter, "missing"),
+                                                                              (.menuBarNotExposed, "not-exposed"), (.unavailable, "unavailable")]
         for (status, name) in statuses {
             render(ShazamPage(model: model, lang: lang, systemStatus: status).environmentObject(shazam), "\(code)-shazam-\(name)", out: out)
         }
         // AudD: no consent → ready → listening → matched (synthetic tone, mocked AudD).
         let store = MemorySecretStore()
+        defaults.removeObject(forKey: MusicRecognitionMode.defaultsKey)
+        let notChosen = AudDRecognition(secrets: store, defaults: defaults, session: session, audio: ToneSource())
+        notChosen.start(source: .systemAudio) // macOS is the chosen method → refused before anything
+        render(AudDPage(lang: lang, close: {}, recognition: notChosen), "\(code)-audd-not-selected", out: out)
+        defaults.set(MusicRecognitionMode.audd.rawValue, forKey: MusicRecognitionMode.defaultsKey)
         let noConsent = AudDRecognition(secrets: store, defaults: defaults, session: session, audio: ToneSource())
         render(AudDPage(lang: lang, close: {}, recognition: noConsent), "\(code)-audd-consent", out: out)
         noConsent.saveSetup(consent: true, token: ["render", "placeholder"].joined(separator: "-"))

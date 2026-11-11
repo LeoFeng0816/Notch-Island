@@ -4,20 +4,77 @@ import ShazamKit
 
 // MARK: - Quick actions under the widgets
 
+enum MusicRecognitionMode: String {
+    case system, audd
+    static let defaultsKey = "NotchIsland.musicRecognitionMode"
+    static func resolve(_ value: String) -> Self { Self(rawValue: value) ?? .system }
+}
+
 struct QuickActionsBar: View {
     @ObservedObject var model: IslandViewModel
     @ObservedObject var lang: LanguageSettings
+    @AppStorage(MusicRecognitionMode.defaultsKey) private var recognitionMode = MusicRecognitionMode.system.rawValue
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var recognitionFlash = false
+
+    /// Shazam-blue fill on the Music Recognition button while macOS is being tried.
+    /// Only opacity changes (no movement), so Reduce Motion keeps a short dissolve
+    /// instead of snapping the color on and off.
+    static let recognitionBlue: UInt32 = 0x0058BD
+    static func flashFade(fadingIn: Bool, reduceMotion: Bool) -> TimeInterval {
+        reduceMotion ? 0.12 : (fadingIn ? 0.18 : 0.5)
+    }
+    /// Minimum time the blue stays up, so a fast failure is still visible.
+    static func feedbackDuration(reduceMotion: Bool) -> Duration {
+        reduceMotion ? .milliseconds(350) : .milliseconds(850)
+    }
 
     var body: some View {
         HStack(spacing: 8) {
-            action("doc.on.clipboard", .qaClipboard) { withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) { model.subpage = .clipboard } }
+            action("doc.on.clipboard", .qaClipboard) {
+                withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.32, dampingFraction: 0.86)) { model.subpage = .clipboard }
+            }
             action("camera.viewfinder", .qaScreenshot) { model.onScreenshot?() }
             action("record.circle", .qaScreenRecord, help: .recordToolbarHelp) { model.onScreenRecording?() }
-            action("shazam.logo.fill", .qaShazam) {
-                withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) { model.subpage = .shazam }
-            }
+            recognitionButton
         }
         .frame(height: IslandViewModel.quickActionsHeight - 6)
+        .onChange(of: model.checkingSystemRecognition) { _, checking in
+            guard !checking, recognitionFlash else { return }
+            withAnimation(.easeOut(duration: Self.flashFade(fadingIn: false, reduceMotion: reduceMotion))) { recognitionFlash = false }
+        }
+    }
+
+    private var recognitionButton: some View {
+        Button(action: recognizeMusic) {
+            HStack(spacing: 5) {
+                Image(systemName: "shazam.logo.fill").font(.system(size: 11, weight: .semibold))
+                Text(lang.t(.qaShazam)).font(.system(size: 10.5, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.7)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background {
+                Capsule().fill(.white.opacity(0.1))
+                    .overlay(Capsule().fill(Color(hex: Self.recognitionBlue)).opacity(recognitionFlash ? 1 : 0))
+            }
+            .foregroundStyle(.white.opacity(0.95))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(PressableStyle())
+        .disabled(model.checkingSystemRecognition)
+        .help(lang.t(.qaShazam))
+        .accessibilityLabel(lang.t(.qaShazam))
+    }
+
+    private func recognizeMusic() {
+        guard MusicRecognitionMode.resolve(recognitionMode) == .system else {
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { model.subpage = .audd }
+            return
+        }
+        guard !model.checkingSystemRecognition else { return }
+        // Blue while macOS is being tried; it fades out when the attempt ends
+        // (onChange above), never as a claim that a song was recognized.
+        withAnimation(.easeOut(duration: Self.flashFade(fadingIn: true, reduceMotion: reduceMotion))) { recognitionFlash = true }
+        model.startSystemRecognition(feedbackDuration: Self.feedbackDuration(reduceMotion: reduceMotion))
     }
 
     private func action(_ symbol: String, _ key: L10nKey, help: L10nKey? = nil, perform: @escaping () -> Void) -> some View {
@@ -68,6 +125,7 @@ struct ClipboardPage: View {
     @ObservedObject var model: IslandViewModel
     @ObservedObject var lang: LanguageSettings
     @EnvironmentObject var store: ClipboardStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var confirmClear = false
 
     var body: some View {
@@ -101,7 +159,7 @@ struct ClipboardPage: View {
     }
 
     private func closePage() {
-        withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) { model.subpage = .none }
+        withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.32, dampingFraction: 0.86)) { model.subpage = .none }
     }
 
     @ViewBuilder private var content: some View {
@@ -116,9 +174,13 @@ struct ClipboardPage: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if store.items.isEmpty {
-            Text(lang.t(.clipboardEmpty)).font(.system(size: 11)).foregroundStyle(.white.opacity(0.55))
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            VStack(spacing: 6) {
+                Text(lang.t(.clipboardEmpty)).font(.system(size: 11)).foregroundStyle(.white.opacity(0.55))
+                pasteboardHint
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
+            pasteboardHint
             ScrollView(.vertical, showsIndicators: false) {
                 LazyVStack(spacing: 4) {
                     ForEach(store.items) { item in
@@ -130,6 +192,21 @@ struct ClipboardPage: View {
             }
             Text(lang.t(.clipboardFooter, lang.t(retentionKey(store.retention))))
                 .font(.system(size: 9)).foregroundStyle(.white.opacity(0.45)).lineLimit(1)
+        }
+    }
+
+    /// macOS 15.4+ "Paste from Other Apps": only shown when it blocks or interrupts history.
+    @ViewBuilder private var pasteboardHint: some View {
+        let access = PasteboardAccess.current()
+        if access == .denied || access == .asks || access == .notAskedYet {
+            HStack(spacing: 6) {
+                Image(systemName: access == .denied ? "exclamationmark.triangle.fill" : "info.circle")
+                    .font(.system(size: 10)).foregroundStyle(access == .denied ? .yellow : .white.opacity(0.6))
+                Text(lang.t(access == .denied ? .pasteboardDeniedShort : .pasteboardAsksShort))
+                    .font(.system(size: 9.5)).foregroundStyle(.white.opacity(0.7)).lineLimit(2)
+                Spacer(minLength: 4)
+                Button(lang.t(.openSettings)) { SystemSettingsLink.open(.pasteboard) }.buttonStyle(PillStyle())
+            }
         }
     }
 
@@ -183,29 +260,42 @@ struct ShazamPage: View {
     @ObservedObject var model: IslandViewModel
     @ObservedObject var lang: LanguageSettings
     @EnvironmentObject var shazam: ShazamRecognizer
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage("NotchIsland.musicShortcutName") private var shortcutName = ""
     @State private var systemPanelStatus: ControlCenterMedia.MusicRecognitionResult?
     @State private var openingSystemPanel = false
     @State private var showingAudD = false
+    private let audd: AudDRecognition?
+    private let guidanceOnly: Bool
 
-    init(model: IslandViewModel, lang: LanguageSettings, systemStatus: ControlCenterMedia.MusicRecognitionResult? = nil) {
+    init(model: IslandViewModel, lang: LanguageSettings, systemStatus: ControlCenterMedia.MusicRecognitionResult? = nil,
+         startWithAudD: Bool = false, audd: AudDRecognition? = nil) {
         self.model = model
         self.lang = lang
+        self.audd = audd
+        guidanceOnly = systemStatus != nil
         _systemPanelStatus = State(initialValue: systemStatus)
+        _showingAudD = State(initialValue: startWithAudD)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            SubpageHeader(title: "Shazam", closeLabel: lang.t(.close), close: {
+            SubpageHeader(title: lang.t(.qaShazam), closeLabel: lang.t(.close), close: {
+                if showingAudD { audd?.cancel() }
                 shazam.reset()
-                withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) { model.subpage = .none }
+                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { model.subpage = .none }
             }) { EmptyView() }
             if showingAudD {
-                AudDPage(lang: lang) { showingAudD = false }
+                AudDPage(lang: lang, close: {
+                    if guidanceOnly { showingAudD = false }
+                    else { model.subpage = .none }
+                }, recognition: audd)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 content.frame(maxWidth: .infinity, maxHeight: .infinity)
-                Text(lang.t(.shazamPrivacy)).font(.system(size: 8.5)).foregroundStyle(.white.opacity(0.45)).lineLimit(2)
+                if !guidanceOnly {
+                    Text(lang.t(.shazamPrivacy)).font(.system(size: 8.5)).foregroundStyle(.white.opacity(0.45)).lineLimit(2)
+                }
             }
         }
         .foregroundStyle(.white)
@@ -216,8 +306,10 @@ struct ShazamPage: View {
         case .idle, .cancelled:
             VStack(spacing: 6) {
                 if shazam.phase == .cancelled { Text(lang.t(.shazamCancelled)).font(.system(size: 11)).foregroundStyle(.white.opacity(0.6)) }
-                Text(lang.t(.shazamStart)).font(.system(size: 12, weight: .semibold))
-                sourceButtons
+                if !guidanceOnly {
+                    Text(lang.t(.shazamStart)).font(.system(size: 12, weight: .semibold))
+                    sourceButtons
+                }
                 systemRecognition
             }
         case .preparing, .listening:
@@ -226,7 +318,7 @@ struct ShazamPage: View {
                     let t = context.date.timeIntervalSinceReferenceDate
                     Image(systemName: "shazam.logo.fill").font(.system(size: 34))
                         .foregroundStyle(Color(hex: 0x0A84FF))
-                        .scaleEffect(1 + 0.06 * sin(t * 4))
+                        .scaleEffect(reduceMotion ? 1 : 1 + 0.06 * sin(t * 4))
                 }
                 VStack(alignment: .leading, spacing: 4) {
                     Text(lang.t(.shazamListening)).font(.system(size: 13, weight: .semibold))
@@ -284,7 +376,7 @@ struct ShazamPage: View {
                 HStack(spacing: 6) {
                     if failure == .microphoneDenied {
                         Button(lang.t(.openSettings)) {
-                            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") { NSWorkspace.shared.open(url) }
+                            SystemSettingsLink.open(.microphone)
                         }.buttonStyle(PillStyle())
                     }
                     retryButton
@@ -325,23 +417,26 @@ struct ShazamPage: View {
     private var systemRecognition: some View {
         VStack(spacing: 5) {
             Text(systemRecognitionStatus).font(.system(size: 10)).foregroundStyle(.white.opacity(0.75))
-                .multilineTextAlignment(.center).lineLimit(3).fixedSize(horizontal: false, vertical: true)
+                .multilineTextAlignment(.center).lineLimit(4).fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 6) {
                 Button(lang.t(.shazamSystemOpen), action: openSystemPanel).buttonStyle(PillStyle())
                     .disabled(openingSystemPanel || shazam.shortcutPhase == .running)
                     .help(lang.t(.shazamSystemFallback))
-                Button(lang.t(.shazamShortcut), action: chooseShortcut).buttonStyle(PillStyle())
-                    .disabled(shazam.shortcutPhase == .running || openingSystemPanel)
-                Button(lang.t(.audDTitle)) { showingAudD = true }.buttonStyle(PillStyle())
-                    .disabled(shazam.shortcutPhase == .running)
-                if systemPanelStatus == .permissionNeeded {
-                    // Opens System Settings; the user decides. Never granted automatically.
-                    Button(lang.t(.openSettings)) {
-                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") { NSWorkspace.shared.open(url) }
-                    }.buttonStyle(PillStyle())
+                if shazam.shortcutPhase == .running {
+                    // The shortcut runs in Shortcuts; stopping it is the user's choice.
+                    Button(lang.t(.shazamShortcutStop)) { shazam.stopShortcut() }.buttonStyle(PillStyle())
                 } else {
-                    guideButton
+                    Button(lang.t(.shazamShortcut), action: chooseShortcut).buttonStyle(PillStyle())
+                        .disabled(openingSystemPanel)
+                        .help(lang.t(.shazamShortcutHelp))
                 }
+                // No AudD shortcut here: the third-party service is only reachable after the
+                // user picks it in Settings › Music Recognition (and consents there).
+                if systemPanelStatus == .permissionNeeded {
+                    // Opens Privacy & Security › Accessibility; the user decides there.
+                    Button(lang.t(.openSettings)) { SystemSettingsLink.open(.accessibility) }.buttonStyle(PillStyle())
+                }
+                guideButton
             }
         }
     }
@@ -351,7 +446,11 @@ struct ShazamPage: View {
         case .running: return lang.t(.shazamShortcutRunning)
         case .finished: return lang.t(.shazamShortcutFinished)
         case .failed: return lang.t(.shazamShortcutFailed)
-        case .result(let text): return text
+        case .notFound: return lang.t(.shazamShortcutNotFound, shortcutName)
+        case .stopped: return lang.t(.shazamShortcutStopped)
+        case .timedOut: return lang.t(.shazamShortcutTimedOut)
+        // Whatever the user's shortcut printed, labelled as such (not as our own match).
+        case .result(let text): return lang.t(.shazamShortcutResult, text)
         case .idle: break
         }
         switch systemPanelStatus {
@@ -359,6 +458,7 @@ struct ShazamPage: View {
         case .uncertain: return lang.t(.shazamSystemUncertain)
         case .permissionNeeded: return lang.t(.shazamSystemNeedsAX)
         case .notInControlCenter: return lang.t(.shazamSystemMissing)
+        case .menuBarNotExposed: return lang.t(.shazamSystemNotExposed)
         case .unavailable: return lang.t(.shazamSystemUnavailable)
         case nil: return lang.t(.shazamSystemFallback)
         }
@@ -382,7 +482,7 @@ struct ShazamPage: View {
         alert.informativeText = lang.t(.shazamShortcutHelp)
         alert.addButton(withTitle: lang.t(.shazamShortcutRun))
         alert.addButton(withTitle: lang.t(.cancel))
-        alert.addButton(withTitle: lang.t(.shazamShortcutGallery))
+        alert.addButton(withTitle: lang.t(.shazamShortcutOpen))
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
         field.placeholderString = lang.t(.shazamShortcutName)
         field.stringValue = shortcutName
@@ -394,7 +494,9 @@ struct ShazamPage: View {
             shortcutName = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             shazam.runShortcut(named: shortcutName)
         case .alertThirdButtonReturn:
-            NSWorkspace.shared.open(URL(string: "shortcuts://gallery")!)
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.shortcuts") {
+                NSWorkspace.shared.open(url)
+            }
         default: break
         }
     }
@@ -427,6 +529,7 @@ struct ToastTrailing: View {
     var toast: IslandToast
     var body: some View {
         Text(toast.text)
+            .accessibilityLabel(toast.accessibilityText ?? toast.text)
             .font(.system(size: 11, weight: .semibold))
             .foregroundStyle(.white)
             .lineLimit(1)

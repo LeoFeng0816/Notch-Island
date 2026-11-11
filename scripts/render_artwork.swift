@@ -65,34 +65,37 @@ func label(_ string: String, at origin: CGPoint, size: CGFloat, weight: NSFont.W
     ])
 }
 
+/// Finder icon centre row, measured from the window's top (must match
+/// `icon_locations` in scripts/dmg_settings.py and the check in make_dmg.sh).
+let installerIconRow: CGFloat = 165
+let installerHeight: CGFloat = 360
+
+func centred(_ string: String, y: CGFloat, size: CGFloat, ink: UInt32) {
+    let attributes: [NSAttributedString.Key: Any] = [
+        .font: NSFont.systemFont(ofSize: size, weight: .regular),
+        .foregroundColor: NSColor(cgColor: color(ink))!,
+    ]
+    let width = (string as NSString).size(withAttributes: attributes).width
+    (string as NSString).draw(at: CGPoint(x: (620 - width) / 2, y: y), withAttributes: attributes)
+}
+
+/// 0.1.1: no dark header, title or instructions — just the app, the arrow to
+/// Applications, and where to look if macOS blocks the app.
 func drawInstaller(_ context: CGContext, version: String?) {
-    let background = CGPath(rect: CGRect(x: 0, y: 0, width: 620, height: 360), transform: nil)
+    let background = CGPath(rect: CGRect(x: 0, y: 0, width: 620, height: installerHeight), transform: nil)
     gradient(context, background, [color(0xF6F9FE), color(0xDEE9F9)],
-             from: CGPoint(x: 40, y: 360), to: CGPoint(x: 590, y: 0))
+             from: CGPoint(x: 40, y: installerHeight), to: CGPoint(x: 590, y: 0))
 
-    let header = CGPath(rect: CGRect(x: 0, y: 238, width: 620, height: 122), transform: nil)
-    gradient(context, header, [color(0x14223A), color(0x263D65)],
-             from: CGPoint(x: 0, y: 360), to: CGPoint(x: 620, y: 238))
-    fill(context, rounded(33, 334, 24, 3, 1.5), color(0x8ED9FF))
-    label("Notch Island", at: CGPoint(x: 33, y: 294), size: 30, weight: .bold, ink: 0xFFFFFF)
-    if let version {
-        label("v\(version)", at: CGPoint(x: 226, y: 302), size: 13, weight: .semibold, ink: 0x8ED9FF)
-    }
-    label("To install, drag Notch Island onto the Applications folder.", at: CGPoint(x: 34, y: 271), size: 14, weight: .medium, ink: 0xE3EDFA)
-    label("安裝：將 Notch Island 拖到右側的 Applications（應用程式）資料夾。", at: CGPoint(x: 34, y: 250), size: 13, weight: .regular, ink: 0xC2D4EE)
+    centred("If macOS blocks Notch Island, please read the README.", y: 46, size: 12, ink: 0x4A5D7C)
+    centred("若 Notch Island 被 macOS 阻擋，請閱讀 README。", y: 26, size: 12, ink: 0x4A5D7C)
 
-    // Footer under the icon labels: where to look if macOS blocks the first launch.
-    label("Then open it from Applications. If macOS blocks the first launch, see “Install” in the README.",
-          at: CGPoint(x: 34, y: 30), size: 11, weight: .regular, ink: 0x4A5D7C)
-    label("之後從「應用程式」開啟；若 macOS 阻擋首次開啟，請參閱 README 的「安裝」說明。",
-          at: CGPoint(x: 34, y: 13), size: 11, weight: .regular, ink: 0x4A5D7C)
-
+    let y = installerHeight - installerIconRow
     let arrow = CGMutablePath()
-    arrow.move(to: CGPoint(x: 262, y: 137))
-    arrow.addLine(to: CGPoint(x: 355, y: 137))
-    arrow.move(to: CGPoint(x: 340, y: 152))
-    arrow.addLine(to: CGPoint(x: 355, y: 137))
-    arrow.addLine(to: CGPoint(x: 340, y: 122))
+    arrow.move(to: CGPoint(x: 262, y: y))
+    arrow.addLine(to: CGPoint(x: 355, y: y))
+    arrow.move(to: CGPoint(x: 340, y: y + 15))
+    arrow.addLine(to: CGPoint(x: 355, y: y))
+    arrow.addLine(to: CGPoint(x: 340, y: y - 15))
     context.addPath(arrow)
     context.setStrokeColor(color(0x365986))
     context.setLineWidth(3)

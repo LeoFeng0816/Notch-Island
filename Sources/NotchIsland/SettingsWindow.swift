@@ -50,6 +50,8 @@ struct SettingsView: View {
     @ObservedObject var audioMonitor: AudioLevelMonitor
     @ObservedObject var stockSearch: StockSearchModel
     @ObservedObject var clipboard: ClipboardStore
+    @ObservedObject var power: PowerAlertController
+    @ObservedObject var audDRecognition: AudDRecognition
     /// Shared with the island (controller); asks Location Services once.
     var useCurrentLocation: () -> Void
     let device: DeviceInfo
@@ -58,6 +60,7 @@ struct SettingsView: View {
 
     /// Widget the user tried to turn on while four were already shown.
     @State private var limitAlertKind: WidgetKind?
+    @AppStorage(MusicRecognitionMode.defaultsKey) private var recognitionMode = MusicRecognitionMode.system.rawValue
 
     var body: some View {
         Form {
@@ -68,6 +71,7 @@ struct SettingsView: View {
             calendarSection
             clockSection
             clipboardSection
+            recognitionSection
             MediaSettingsSection(lang: lang, music: music, audioMonitor: audioMonitor)
             deviceSection
         }
@@ -83,13 +87,44 @@ struct SettingsView: View {
 
     // MARK: General
 
+    private var recognitionSection: some View {
+        Section {
+            Picker(lang.t(.recognitionSettings), selection: Binding(
+                get: { MusicRecognitionMode.resolve(recognitionMode).rawValue },
+                set: { newValue in
+                    // Leaving AudD stops anything in flight; nothing more is captured or sent.
+                    if MusicRecognitionMode.resolve(newValue) != .audd { audDRecognition.cancel() }
+                    recognitionMode = newValue
+                }
+            )) {
+                Text(lang.t(.recognitionSystem)).tag(MusicRecognitionMode.system.rawValue)
+                Text(lang.t(.recognitionThirdParty)).tag(MusicRecognitionMode.audd.rawValue)
+            }
+            if MusicRecognitionMode.resolve(recognitionMode) == .audd {
+                Button(lang.t(.audDSetup)) {
+                    Task { await AudDSetup.present(lang: lang, recognition: audDRecognition) }
+                }
+                .disabled(audDRecognition.phase.busy || audDRecognition.isSettingUp)
+            }
+        } header: {
+            Text(lang.t(.recognitionSettings))
+        } footer: {
+            Text(lang.t(.recognitionSettingsHelp)).font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
     private var generalSection: some View {
-        Section(lang.t(.general)) {
+        Section {
             Picker(lang.t(.language), selection: $lang.language) {
                 ForEach(AppLanguage.allCases) { option in
                     Text(lang.displayName(option)).tag(option)
                 }
             }
+            Toggle(lang.t(.powerAlertsToggle), isOn: Binding(get: { power.enabled }, set: { power.setEnabled($0) }))
+        } header: {
+            Text(lang.t(.general))
+        } footer: {
+            Text(lang.t(.powerAlertsNote)).font(.caption).foregroundStyle(.secondary)
         }
     }
 
@@ -385,15 +420,7 @@ struct SettingsView: View {
                 Spacer()
                 Button(lang.t(.clipboardClear), role: .destructive) { clipboard.clear() }.disabled(clipboard.items.isEmpty)
             }
-            HStack {
-                Text(lang.t(SystemMedia.canPostEvents ? .pasteAllowed : .pasteNeedsPermission)).font(.caption)
-                    .foregroundStyle(SystemMedia.canPostEvents ? Color.green : .secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer()
-                if !SystemMedia.canPostEvents {
-                    Button(lang.t(.permAllow)) { SystemMedia.requestPostEventAccess() }
-                }
-            }
+            ClipboardPermissionRows(lang: lang, historyEnabled: clipboard.enabled)
         } header: {
             Text(lang.t(.qaClipboard))
         } footer: {
@@ -538,6 +565,74 @@ struct WidgetOrderRow: View {
                 .help(lang.t(.moveDown))
         }
         .frame(height: 26)
+    }
+}
+
+/// Permission rows for clipboard history and automatic paste. Both buttons
+/// always do something visible: "Allow…" asks macOS the first time and opens
+/// System Settings after that; "Open Settings" opens the exact pane. Status is
+/// re-checked when the app becomes active and while Settings is open.
+struct ClipboardPermissionRows: View {
+    @ObservedObject var lang: LanguageSettings
+    var historyEnabled: Bool
+    @StateObject private var postEvents = PostEventAccess()
+    @State private var pasteboard = PasteboardAccess.current()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top) {
+                Text(lang.t(postEvents.granted ? .pasteAllowed : .pasteNeedsPermission)).font(.caption)
+                    .foregroundStyle(postEvents.granted ? Color.green : .secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer()
+                if !postEvents.granted {
+                    Button(lang.t(.permAllow)) { postEvents.request() }
+                    Button(lang.t(.openSettings)) { postEvents.showSettings() }
+                }
+            }
+            if !postEvents.granted, let note = feedbackText {
+                Text(note).font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+            }
+            if historyEnabled, let text = pasteboardText {
+                HStack(alignment: .top) {
+                    Text(text).font(.caption)
+                        .foregroundStyle(pasteboard == .denied ? Color.orange : (pasteboard.needsAttention ? .secondary : .green))
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                    if pasteboard.needsAttention {
+                        Button(lang.t(.openSettings)) { SystemSettingsLink.open(.pasteboard) }
+                    }
+                }
+            }
+        }
+        .onAppear { refresh() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in refresh() }
+        .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in refresh() }
+    }
+
+    private func refresh() {
+        postEvents.refresh()
+        let now = PasteboardAccess.current()
+        if now != pasteboard { pasteboard = now }
+    }
+
+    private var feedbackText: String? {
+        if postEvents.grantLooksStale { return lang.t(.mediaKeysStaleGrant) }
+        switch postEvents.feedback {
+        case .none: return nil
+        case .prompted: return lang.t(.permPromptedHint)
+        case .openedSettings: return lang.t(.permOpenedSettingsHint)
+        case .couldNotOpen: return lang.t(.permCouldNotOpen)
+        }
+    }
+
+    private var pasteboardText: String? {
+        switch pasteboard {
+        case .unrestricted: return nil
+        case .notAskedYet, .asks: return lang.t(.pasteboardAsks)
+        case .allowed: return lang.t(.pasteboardAllowed)
+        case .denied: return lang.t(.pasteboardDenied)
+        }
     }
 }
 

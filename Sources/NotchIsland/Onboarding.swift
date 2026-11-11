@@ -48,9 +48,25 @@ final class PermissionStatus: ObservableObject {
         }
     }
 
-    // Each request is triggered by a button press only.
-    func requestKeystrokes() { CGRequestPostEventAccess(); refresh() }
-    func requestScreenRecording() { CGRequestScreenCaptureAccess(); refresh() }
+    private let keystrokeAccess = PostEventAccess()
+    static let screenRequestedKey = "NotchIsland.screenCapture.requestedBuild"
+
+    // Each request is triggered by a button press only. macOS shows its own
+    // request once per app identity; later presses open the pane instead of
+    // silently doing nothing.
+    func requestKeystrokes() { keystrokeAccess.request(); refresh() }
+    func requestScreenRecording() {
+        if !CGPreflightScreenCaptureAccess() {
+            let build = SystemMedia.currentBuildID() ?? "unknown"
+            if UserDefaults.standard.string(forKey: Self.screenRequestedKey) == build {
+                SystemSettingsLink.open(.screenCapture)
+            } else {
+                UserDefaults.standard.set(build, forKey: Self.screenRequestedKey)
+                CGRequestScreenCaptureAccess()
+            }
+        }
+        refresh()
+    }
     func requestMicrophone() {
         AVCaptureDevice.requestAccess(for: .audio) { _ in
             DispatchQueue.main.async { MainActor.assumeIsolated { self.refresh() } }
@@ -109,13 +125,13 @@ struct OnboardingView: View {
                 }
                 Section {
                     row("keyboard", .permKeystrokes, .permKeystrokesWhy, status.keystrokes, request: status.requestKeystrokes,
-                        settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+                        settings: PrivacyPane.accessibility.urls)
                     row("camera.viewfinder", .permScreen, .permScreenWhy, status.screenRecording, request: status.requestScreenRecording,
-                        settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
+                        settings: PrivacyPane.screenCapture.urls)
                     row("mic.fill", .permMicrophone, .permMicrophoneWhy, status.microphone, request: status.requestMicrophone,
-                        settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")
+                        settings: PrivacyPane.microphone.urls)
                     row("bell.badge.fill", .permNotifications, .permNotificationsWhy, status.notifications, request: status.requestNotifications,
-                        settingsURL: "x-apple.systempreferences:com.apple.Notifications-Settings.extension")
+                        settings: ["x-apple.systempreferences:com.apple.Notifications-Settings.extension"].compactMap(URL.init(string:)))
                     info("gearshape.2.fill", .permAutomation, .permAutomationWhy)
                     info("waveform", .permSystemAudio, .permSystemAudioWhy)
                     info("location.fill", .permLocationCalendar, .permLocationCalendarWhy)
@@ -146,6 +162,7 @@ struct OnboardingView: View {
         .frame(minWidth: 480, minHeight: 560)
         .onAppear { status.refresh() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in status.refresh() }
+        .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in status.refresh() }
     }
 
     private func statusText(_ state: PermissionStatus.State) -> String {
@@ -158,7 +175,7 @@ struct OnboardingView: View {
     }
 
     private func row(_ symbol: String, _ title: L10nKey, _ why: L10nKey, _ state: PermissionStatus.State,
-                     request: @escaping () -> Void, settingsURL: String) -> some View {
+                     request: @escaping () -> Void, settings: [URL]) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: symbol).frame(width: 20).foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 2) {
@@ -171,7 +188,7 @@ struct OnboardingView: View {
                 if state != .granted {
                     HStack {
                         if state != .denied { Button(lang.t(.permAllow), action: request) }
-                        Button(lang.t(.openSettings)) { if let url = URL(string: settingsURL) { NSWorkspace.shared.open(url) } }
+                        Button(lang.t(.openSettings)) { SystemSettingsLink.open(settings) }
                     }
                     .controlSize(.small)
                 }

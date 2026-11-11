@@ -76,7 +76,7 @@ assert (mount / ".VolumeIcon.icns").is_file()
 with DSStore.open(str(mount / ".DS_Store"), "r") as layout:
     app = layout["Notch Island.app"]["Iloc"]
     link = layout["Applications"]["Iloc"]
-    assert 0 < app[0] < link[0] < 620 and app[1] == link[1] == 223
+    assert 0 < app[0] < link[0] < 620 and app[1] == link[1] == 165
 print("    Finder background, icon positions and two visible items verified")
 PY
 ARCHS=" $(lipo -archs "$BIN") "

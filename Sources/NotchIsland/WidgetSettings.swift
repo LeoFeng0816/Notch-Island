@@ -342,7 +342,7 @@ protocol SecretStore: Sendable {
     /// Like `read()`, but tells "not stored" apart from "stored but unreadable".
     func readKey() -> Result<String, ProviderError>
     @discardableResult func write(_ value: String) -> Bool
-    func delete()
+    @discardableResult func delete() -> Bool
 }
 
 extension SecretStore {
@@ -407,7 +407,10 @@ struct KeychainSecretStore: SecretStore {
         return status == errSecSuccess
     }
 
-    func delete() { SecItemDelete(query as CFDictionary) }
+    func delete() -> Bool {
+        let status = SecItemDelete(query as CFDictionary)
+        return status == errSecSuccess || status == errSecItemNotFound
+    }
 }
 
 /// In-memory store used by tests.
@@ -416,5 +419,5 @@ final class MemorySecretStore: SecretStore, @unchecked Sendable {
     init(_ value: String? = nil) { self.value = value }
     func read() -> String? { value }
     func write(_ value: String) -> Bool { self.value = value; return true }
-    func delete() { value = nil }
+    func delete() -> Bool { value = nil; return true }
 }

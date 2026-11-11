@@ -647,15 +647,45 @@ enum BrowserMedia {
 
         static let agreeTolerance: TimeInterval = 2
         static let neededStreak = 2
+        /// Earlier items whose timelines are remembered (rapid skips A → B → C).
+        static let rememberedTimelines = 4
+        /// Once the current item has been shown consistently this long, every
+        /// page source has moved on: earlier timelines are forgotten, so a later
+        /// seek can never be hidden by a coincidental match.
+        static let forgetPreviousAfter: TimeInterval = 15
+
+        /// Last accepted time of one item (a timeline that may keep running).
+        struct Timeline: Equatable {
+            var item: String
+            var sample: TimeSample
+            var at: Date
+            var playing: Bool
+
+            func predicted(at date: Date) -> TimeInterval {
+                sample.position + (playing ? max(0, date.timeIntervalSince(at)) : 0)
+            }
+        }
 
         private var item: String?
         /// When the current item was first seen.
         private var changedAt: Date?
-        private var previous: (sample: TimeSample, at: Date, playing: Bool)?
-        private var accepted: (sample: TimeSample, at: Date, playing: Bool)?
-        private var streaks: [String: (sample: TimeSample, at: Date, count: Int)] = [:]
+        /// Newest sample date seen; older samples arriving late are ignored.
+        private var lastDate: Date?
+        /// Timelines of earlier items, oldest first. Kept across several
+        /// changes: the old code kept only one and dropped it as soon as one
+        /// sample was accepted, so a stale source that came back (or a second
+        /// quick skip before anything was shown) stacked the old song's time on
+        /// the new one.
+        private var previous: [Timeline] = []
+        private var accepted: Timeline?
+        /// When the current item's time was first shown.
+        private var firstAcceptedAt: Date?
+        private var streaks: [Source: (sample: TimeSample, at: Date, count: Int)] = [:]
 
         static func == (a: TimeResolver, b: TimeResolver) -> Bool { a.item == b.item }
+
+        /// Items whose timelines would currently hide a matching time (tests/diagnostics).
+        var rememberedItems: [String] { previous.map(\.item) }
 
         static func agree(_ a: TimeSample, _ b: TimeSample) -> Bool {
             abs(a.duration - b.duration) <= agreeTolerance && abs(a.position - b.position) <= agreeTolerance
@@ -669,22 +699,38 @@ enum BrowserMedia {
         /// Updates the per-source consistency streak (advance ≈ elapsed while playing).
         private mutating func streak(_ name: Source, _ sample: TimeSample, playing: Bool, at date: Date) -> Int {
             var count = 1
-            if let last = streaks[name.rawValue] {
+            if let last = streaks[name] {
                 let elapsed = max(0, date.timeIntervalSince(last.at))
                 let expected = playing ? elapsed : 0
                 let moved = sample.position - last.sample.position
                 if abs(sample.duration - last.sample.duration) <= 1,
                    abs(moved - expected) <= max(1.5, 0.5 * elapsed) { count = last.count + 1 }
             }
-            streaks[name.rawValue] = (sample, date, count)
+            streaks[name] = (sample, date, count)
             return count
         }
 
+        private mutating func remember(_ timeline: Timeline) {
+            previous.removeAll { $0.item == timeline.item }
+            previous.append(timeline)
+            if previous.count > Self.rememberedTimelines { previous.removeFirst(previous.count - Self.rememberedTimelines) }
+        }
+
         mutating func resolve(item newItem: String, samples: TimeSamples, isPlaying: Bool, at date: Date) -> (TimeSample, Source)? {
+            // A read that started earlier but finished later must not move the clock back.
+            if let lastDate, date < lastDate { return nil }
+            lastDate = date
             if newItem != item {
-                // Remember where the old item was, to recognise its timeline continuing.
-                previous = accepted
-                accepted = nil
+                if let accepted { remember(accepted) }
+                // Identity flicker (e.g. metadata briefly missing: A → A′ → A):
+                // returning to a recent item restores its own timeline instead
+                // of treating it as someone else's.
+                if let index = previous.lastIndex(where: { $0.item == newItem }) {
+                    accepted = previous.remove(at: index)
+                } else {
+                    accepted = nil
+                }
+                firstAcceptedAt = nil
                 streaks = [:]
                 item = newItem
                 changedAt = date
@@ -695,50 +741,81 @@ enum BrowserMedia {
             var counts: [Source: Int] = [:]
             for (name, s) in ordered { counts[name] = streak(name, s, playing: isPlaying, at: date) }
 
-            var candidate: (TimeSample, Source)?
-            // (a) two independent sources agree → most precise of them.
-            outer: for (i, (name, s)) in ordered.enumerated() {
-                for (j, (_, other)) in ordered.enumerated() where j != i && Self.agree(s, other) {
-                    candidate = (s, name); break outer
-                }
+            // A single source is trusted once it has been consistent, or at once
+            // when it continues this item's own accepted timeline.
+            func proven(_ name: Source, _ s: TimeSample) -> Bool {
+                if (counts[name] ?? 0) >= Self.neededStreak { return true }
+                guard let accepted, accepted.item == newItem else { return false }
+                return abs(s.duration - accepted.sample.duration) <= 1 && abs(s.position - accepted.predicted(at: date)) <= 1.5
             }
-            // (b) a single trusted source that has been consistent: the visible
-            // player-bar time if the page has one, else the player API, else the element.
-            if candidate == nil {
-                let trusted: (Source, TimeSample)? = ui.map { (.ui, $0) } ?? player.map { (.player, $0) } ?? element.map { (.element, $0) }
-                if let (name, s) = trusted, (counts[name] ?? 0) >= Self.neededStreak, ordered.count == 1 || name == .ui {
-                    candidate = (s, name)
+            func agreeing(_ list: [(Source, TimeSample)]) -> (TimeSample, Source)? {
+                for (i, (name, s)) in list.enumerated() {
+                    for (j, (_, other)) in list.enumerated() where j != i && Self.agree(s, other) { return (s, name) }
                 }
+                return nil
             }
-            guard let (sample, name) = candidate else { return nil }
-            // (c) still the previous item's timeline? Keep hiding — no time limit.
-            if let previous, Self.continuesPrevious(sample, previous: previous, changedAt: changedAt ?? date, at: date) { return nil }
-            previous = nil
-            accepted = (sample, date, isPlaying)
+
+            // Candidates, best first; the first one that isn't an earlier item's
+            // timeline wins. `visible`: backed by the player-bar text.
+            var candidates: [(sample: TimeSample, source: Source, visible: Bool)] = []
+            if let ui {
+                // (a) the visible player-bar time agrees with another source → the more precise one.
+                if let pair = agreeing(ordered.filter { $0.0 != .ui }.filter { Self.agree($0.1, ui) } + [(.ui, ui)]) {
+                    candidates.append((pair.0, pair.1, true))
+                }
+                // (b) the visible time proved itself; it beats an agreeing pair it
+                // disagrees with (the player API and a continuous element can share a stale value).
+                if proven(.ui, ui) { candidates.append((ui, .ui, true)) }
+                // (c) player + element agree while the bar text is frozen (YouTube
+                // hides its controls and may stop updating the text).
+                if let pair = agreeing(ordered.filter { $0.0 != .ui }) { candidates.append((pair.0, pair.1, false)) }
+            } else if let pair = agreeing(ordered) {
+                candidates.append((pair.0, pair.1, false))
+            } else if ordered.count == 1, let (name, s) = ordered.first, proven(name, s) {
+                candidates.append((s, name, false))
+            }
+            if let firstAcceptedAt, date.timeIntervalSince(firstAcceptedAt) >= Self.forgetPreviousAfter { previous = [] }
+            let since = changedAt ?? date
+            // The visible bar lags a song change by a moment, never by many
+            // seconds. If it still continues the old line after `visibleLagLimit`,
+            // the same song was re-identified (e.g. its ID or metadata arrived
+            // late) — showing it is right; hiding it forever was the old bug.
+            let barTrusted = date.timeIntervalSince(since) > Self.visibleLagLimit
+            guard let (sample, name, _) = candidates.first(where: { candidate in
+                (candidate.visible && barTrusted)
+                    || !previous.contains { Self.continuesPrevious(candidate.sample, previous: $0, changedAt: since, at: date) }
+            }) else { return nil }
+            accepted = Timeline(item: newItem, sample: sample, at: date, playing: isPlaying)
+            if firstAcceptedAt == nil { firstAcceptedAt = date }
             return (sample, name)
         }
 
         /// How long a same-length, not-earlier time may be treated as the
         /// previous item's stale display after a change.
         static let staleDisplayWindow: TimeInterval = 4
+        /// Longest plausible delay of the player-bar text after a song change.
+        static let visibleLagLimit: TimeInterval = 8
         /// Slack for a late-detected change (polling interval + read time).
         static let freshStartSlack: TimeInterval = 6
 
         /// Whether `sample` still looks like the previous item's timeline.
         /// Designed so a normal new song can never be hidden indefinitely:
+        /// - the exact signature (same length, position on the old line within
+        ///   1.5 s) is stale even early on — a fresh start differs from it by at
+        ///   least the old position;
         /// - consistent with starting at the change (≤ time since change + slack) → new song;
-        /// - the open-ended rule needs the exact continuation signature and is
-        ///   only used when the old position was far enough from 0 to be
-        ///   distinguishable from a fresh start (the old rule hid a song forever
-        ///   after skipping one only ~3 s in);
+        /// - the open-ended rule needs the old position to be far enough from 0
+        ///   to be distinguishable from a fresh start (the old rule hid a song
+        ///   forever after skipping one only ~3 s in);
         /// - "same length, not earlier" is only trusted briefly after the change
         ///   (it hid similar-length songs whose first accepted sample came late).
-        static func continuesPrevious(_ sample: TimeSample, previous: (sample: TimeSample, at: Date, playing: Bool),
-                                      changedAt: Date, at date: Date) -> Bool {
+        static func continuesPrevious(_ sample: TimeSample, previous: Timeline, changedAt: Date, at date: Date) -> Bool {
+            let predicted = previous.predicted(at: date)
+            if previous.sample.position >= 2.5, abs(sample.duration - previous.sample.duration) <= 1,
+               abs(sample.position - predicted) <= 1.5 { return true }
             guard sample.position > 5 else { return false } // a new item starts near zero
             let sinceChange = max(0, date.timeIntervalSince(changedAt))
             if sample.position <= sinceChange + freshStartSlack { return false }
-            let predicted = previous.sample.position + (previous.playing ? max(0, date.timeIntervalSince(previous.at)) : 0)
             if previous.sample.position > freshStartSlack, abs(sample.position - predicted) <= 3 { return true }
             if sinceChange <= staleDisplayWindow, abs(sample.duration - previous.sample.duration) <= 1,
                sample.position >= previous.sample.position - 1 { return true }

@@ -148,7 +148,7 @@ enum AudDService {
 // MARK: - Audio clip (in memory only)
 
 /// Collects at most `captureSeconds` of mono audio from the input's own
-/// queues. A closed clip rejects late buffers; `discard()` wipes it.
+/// queues. A closed clip rejects late buffers; `discard()` releases its samples.
 final class AudDClip: @unchecked Sendable {
     private let lock = NSLock()
     private var samples: [Float] = []
@@ -229,22 +229,28 @@ final class LiveAudDAudioSource: AudDAudioSource {
 
 // MARK: - Recognition flow
 
-/// Nothing happens until the user has (1) consented to the disclosure,
-/// (2) saved their own AudD token, and (3) pressed a source button. Then at
-/// most 10 s of that source is kept in memory, sent once, and dropped.
+/// Nothing happens until the user has (1) chosen AudD in Settings › Music
+/// Recognition, (2) consented to the disclosure, (3) saved their own AudD
+/// token, and (4) pressed a source button. Then at most 10 s of that source is
+/// kept in memory, sent once, and dropped.
 @MainActor
 final class AudDRecognition: ObservableObject {
+    enum TokenState: Equatable { case unchecked, missing, available, unavailable }
+
     enum Phase: Equatable {
         case idle, preparing, listening, sending, cancelled
+        /// AudD is not the recognition method chosen in Settings.
+        case notSelected
         case needsConsent, needsToken, keychain
-        case permissionDenied, noAudio, network
+        case permissionDenied, sourceUnavailable(ShazamRecognizer.Source), noAudio, network
         case finished(AudDService.Outcome)
 
         var busy: Bool { self == .preparing || self == .listening || self == .sending }
     }
 
     @Published private(set) var phase: Phase = .idle
-    @Published private(set) var hasToken = false
+    @Published private(set) var tokenState: TokenState = .unchecked
+    @Published var isSettingUp = false
 
     private let secrets: SecretStore
     private let defaults: UserDefaults
@@ -272,60 +278,76 @@ final class AudDRecognition: ObservableObject {
 
     var consented: Bool { defaults.integer(forKey: AudDService.consentKey) >= AudDService.consentVersion }
 
-    /// Reads only whether a token exists (never displays it).
-    func refreshTokenState() {
-        let secrets = secrets
-        let gate = Self.keychainGate
-        Task { [weak self] in
-            let present = await Task.detached(priority: .utility) { () -> Bool? in
-                guard gate.begin() else { return nil }
-                defer { gate.end() }
-                // A stored-but-unreadable item (locked Keychain, or a rebuilt ad-hoc
-                // app awaiting "Allow") still counts as present; start() then reports it.
-                if case .failure(.missingAPIKey) = secrets.readKey() { return false }
-                return true
-            }.value
-            if let present { self?.hasToken = present }
+    /// The user picked "Third-party API (AudD)" in Settings (default is macOS).
+    var selected: Bool {
+        MusicRecognitionMode.resolve(defaults.string(forKey: MusicRecognitionMode.defaultsKey) ?? "") == .audd
+    }
+
+    var hasToken: Bool { tokenState == .available }
+
+    private func readToken() async -> Result<String, ProviderError> {
+        await Task.detached(priority: .utility) { [secrets, gate = Self.keychainGate] in
+            guard gate.begin() else { return .failure(.keychainUnavailable) }
+            defer { gate.end() }
+            return secrets.readKey()
+        }.value
+    }
+
+    func refreshTokenState() async {
+        let result = await readToken()
+        guard !Task.isCancelled else { return }
+        updateTokenState(result)
+    }
+
+    private func updateTokenState(_ result: Result<String, ProviderError>) {
+        switch result {
+        case .success: tokenState = .available
+        case .failure(.missingAPIKey): tokenState = .missing
+        case .failure: tokenState = .unavailable
         }
     }
 
     /// Saves consent and (optionally) a new token. Returns false if the token is malformed or Keychain refused it.
     @discardableResult
     func saveSetup(consent: Bool, token: String) -> Bool {
+        if !consent { revokeConsent() }
+        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            guard let valid = AudDService.validToken(trimmed), secrets.write(valid) else { return false }
+            tokenState = .available
+        }
         objectWillChange.send()
         defaults.set(consent ? AudDService.consentVersion : 0, forKey: AudDService.consentKey)
-        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return true }
-        guard let valid = AudDService.validToken(trimmed), secrets.write(valid) else { return false }
-        hasToken = true
-        if phase == .needsToken || phase == .needsConsent { phase = .idle }
+        if !phase.busy { phase = .idle }
         return true
     }
 
-    func removeToken() {
-        secrets.delete()
-        hasToken = false
+    @discardableResult
+    func removeToken() -> Bool {
+        cancel()
+        guard secrets.delete() else { return false }
+        tokenState = .missing
+        phase = .idle
+        return true
     }
 
     func revokeConsent() {
+        cancel()
         objectWillChange.send()
         defaults.set(0, forKey: AudDService.consentKey)
     }
 
     func start(source: ShazamRecognizer.Source) {
-        guard !phase.busy else { return }
+        guard !phase.busy, !isSettingUp else { return }
+        guard selected else { phase = .notSelected; return }
         guard consented else { phase = .needsConsent; return }
         phase = .preparing
-        let secrets = secrets
-        let gate = Self.keychainGate
         task = Task { [weak self] in
             // 1. Token from Keychain (before any audio is touched).
-            let token = await Task.detached(priority: .utility) { () -> Result<String, ProviderError> in
-                guard gate.begin() else { return .failure(.keychainUnavailable) }
-                defer { gate.end() }
-                return secrets.readKey()
-            }.value
-            guard let self, !Task.isCancelled else { return }
+            guard let self else { return }
+            let token = await self.readToken()
+            guard !Task.isCancelled else { return }
+            self.updateTokenState(token)
             let apiToken: String
             switch token {
             case .success(let value): apiToken = value
@@ -339,7 +361,7 @@ final class AudDRecognition: ObservableObject {
                 guard allowed else { self.phase = .permissionDenied; return }
             }
             let clip = AudDClip()
-            guard self.audio.begin(source, into: clip) else { self.phase = .noAudio; return }
+            guard self.audio.begin(source, into: clip) else { self.phase = .sourceUnavailable(source); return }
             self.clip = clip
             self.phase = .listening
             do { try await Task.sleep(for: self.listenDuration) } catch { return } // cancel() cleans up
@@ -365,7 +387,7 @@ final class AudDRecognition: ObservableObject {
         }
     }
 
-    /// Stops capture/upload and wipes the clip.
+    /// Stops capture, cancels a pending request, and releases the clip.
     func cancel() {
         guard phase.busy else { return }
         task?.cancel()
@@ -409,17 +431,18 @@ struct AudDPage: View {
             HStack(spacing: 6) {
                 if recognition.phase.busy {
                     Button(lang.t(.cancel)) { recognition.cancel() }.buttonStyle(PillStyle())
-                } else {
+                } else if recognition.phase != .notSelected {
                     if ShazamRecognizer.supportsSystemAudio {
                         Button(lang.t(.audDUploadSystem)) { start(.systemAudio) }.buttonStyle(PillStyle())
                     }
                     Button(lang.t(.audDUploadMic)) { start(.microphone) }.buttonStyle(PillStyle())
                 }
             }
+            .disabled(recognition.isSettingUp)
             HStack(spacing: 6) {
                 Button(lang.t(.back)) { recognition.cancel(); close() }.buttonStyle(PillStyle())
-                Button(lang.t(.audDSetup)) { showSetup() }.buttonStyle(PillStyle())
-                    .disabled(recognition.phase.busy)
+                Button(lang.t(.audDSetup), action: showSetup).buttonStyle(PillStyle())
+                    .disabled(recognition.phase.busy || recognition.isSettingUp)
                 if case .finished(.matched(let song)) = recognition.phase {
                     Button(lang.t(.shazamCopy)) {
                         NSPasteboard.general.clearContents()
@@ -431,18 +454,24 @@ struct AudDPage: View {
                 }
             }
         }
-        .onAppear { recognition.refreshTokenState() }
         .onDisappear { recognition.cancel() }
     }
 
     private func start(_ source: ShazamRecognizer.Source) {
-        guard recognition.consented, recognition.hasToken else { showSetup(); return }
+        guard !recognition.isSettingUp else { return }
+        guard recognition.selected else { recognition.start(source: source); return } // reports .notSelected
+        guard recognition.consented, recognition.tokenState != .missing else { showSetup(); return }
         recognition.start(source: source)
+    }
+
+    private func showSetup() {
+        Task { await AudDSetup.present(lang: lang, recognition: recognition) }
     }
 
     private var isProblem: Bool {
         switch recognition.phase {
-        case .needsConsent, .needsToken, .keychain, .permissionDenied, .noAudio, .network: return true
+        case .idle: return recognition.tokenState == .unavailable
+        case .notSelected, .needsConsent, .needsToken, .keychain, .permissionDenied, .sourceUnavailable, .noAudio, .network: return true
         case .finished(let outcome):
             if case .matched = outcome { return false }
             return outcome != .noMatch
@@ -454,15 +483,23 @@ struct AudDPage: View {
         switch recognition.phase {
         case .idle:
             if !recognition.consented { return lang.t(.audDNeedsConsent) }
-            return recognition.hasToken ? lang.t(.audDReady) : lang.t(.audDMissingToken)
+            switch recognition.tokenState {
+            case .unchecked: return lang.t(.audDStartHint)
+            case .available: return lang.t(.audDReady)
+            case .missing: return lang.t(.audDMissingToken)
+            case .unavailable: return lang.t(.errKeychain)
+            }
         case .preparing: return lang.t(.audDPreparing)
         case .listening: return lang.t(.audDListening)
         case .sending: return lang.t(.audDSending)
         case .cancelled: return lang.t(.audDCancelled)
+        case .notSelected: return lang.t(.audDNotSelected)
         case .needsConsent: return lang.t(.audDNeedsConsent)
         case .needsToken: return lang.t(.audDMissingToken)
         case .keychain: return lang.t(.errKeychain)
         case .permissionDenied: return lang.t(.shazamMicDenied)
+        case .sourceUnavailable(let source):
+            return lang.t(source == .microphone ? .audDMicUnavailable : .audDSystemUnavailable)
         case .noAudio: return lang.t(.audDNoAudio)
         case .network: return lang.t(.audDNetwork)
         case .finished(let outcome):
@@ -477,9 +514,16 @@ struct AudDPage: View {
         }
     }
 
-    /// Full disclosure + consent + token entry in a standard alert (more room
-    /// than the island). The token field is secure and cleared after use.
-    private func showSetup() {
+}
+
+@MainActor enum AudDSetup {
+    /// Shared by Settings and the island. The secure field is cleared after use.
+    static func present(lang: LanguageSettings, recognition: AudDRecognition) async {
+        guard !recognition.isSettingUp, !recognition.phase.busy else { return }
+        recognition.isSettingUp = true
+        defer { recognition.isSettingUp = false }
+        await recognition.refreshTokenState()
+        guard !Task.isCancelled else { return }
         let alert = NSAlert()
         alert.messageText = lang.t(.audDSetupTitle)
         alert.informativeText = lang.t(.audDDisclosure)
@@ -487,20 +531,27 @@ struct AudDPage: View {
         consent.state = recognition.consented ? .on : .off
         let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
         field.placeholderString = lang.t(recognition.hasToken ? .audDTokenReplace : .audDToken)
-        let stored = NSTextField(labelWithString: lang.t(recognition.hasToken ? .audDTokenStored : .audDTokenNone))
+        let tokenStatus: L10nKey
+        switch recognition.tokenState {
+        case .available: tokenStatus = .audDTokenStored
+        case .missing: tokenStatus = .audDTokenNone
+        case .unchecked, .unavailable: tokenStatus = .errKeychain
+        }
+        let stored = NSTextField(wrappingLabelWithString: lang.t(tokenStatus))
         stored.font = .systemFont(ofSize: 11)
         stored.textColor = .secondaryLabelColor
         let stack = NSStackView(views: [consent, field, stored])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 8
-        stack.frame = NSRect(x: 0, y: 0, width: 320, height: 78)
+        stack.frame = NSRect(x: 0, y: 0, width: 340, height: 94)
+        stored.widthAnchor.constraint(lessThanOrEqualToConstant: 340).isActive = true
         alert.accessoryView = stack
-        alert.window.initialFirstResponder = field
         alert.addButton(withTitle: lang.t(.audDSave))
         alert.addButton(withTitle: lang.t(.cancel))
         alert.addButton(withTitle: lang.t(.audDTrial))
-        if recognition.hasToken { alert.addButton(withTitle: lang.t(.audDRemoveToken)) }
+        if recognition.tokenState != .missing { alert.addButton(withTitle: lang.t(.audDRemoveToken)) }
+        alert.window.initialFirstResponder = field
         NSApp.activate()
         let response = alert.runModal()
         let token = field.stringValue
@@ -508,20 +559,22 @@ struct AudDPage: View {
         switch response {
         case .alertFirstButtonReturn:
             if !recognition.saveSetup(consent: consent.state == .on, token: token) {
-                let failure = NSAlert()
-                failure.messageText = lang.t(.audDSetupTitle)
-                failure.informativeText = lang.t(.audDTokenRejected)
-                failure.addButton(withTitle: lang.t(.ok))
-                failure.runModal()
+                showFailure(.audDTokenRejected, lang: lang)
             }
-            if consent.state != .on { recognition.revokeConsent() }
         case .alertThirdButtonReturn:
             NSWorkspace.shared.open(AudDService.pricingURL)
         case NSApplication.ModalResponse(rawValue: NSApplication.ModalResponse.alertThirdButtonReturn.rawValue + 1):
-            recognition.removeToken()
+            if !recognition.removeToken() { showFailure(.audDTokenRemovalFailed, lang: lang) }
         default:
             break
         }
-        recognition.refreshTokenState()
+    }
+
+    private static func showFailure(_ message: L10nKey, lang: LanguageSettings) {
+        let alert = NSAlert()
+        alert.messageText = lang.t(.audDSetupTitle)
+        alert.informativeText = lang.t(message)
+        alert.addButton(withTitle: lang.t(.ok))
+        alert.runModal()
     }
 }

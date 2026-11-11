@@ -14,7 +14,9 @@ show_sidebar = False
 show_pathbar = False
 icon_size = 112
 text_size = 14
+# Centre row 165 pt from the top (no header since 0.1.1); keep in sync with
+# installerIconRow in scripts/render_artwork.swift and the check in make_dmg.sh.
 icon_locations = {
-    "Notch Island.app": (158, 223),
-    "Applications": (462, 223),
+    "Notch Island.app": (158, 165),
+    "Applications": (462, 165),
 }

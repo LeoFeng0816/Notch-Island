@@ -102,6 +102,8 @@ struct IslandRootView: View {
     let audioMonitor: AudioLevelMonitor
     let clipboard: ClipboardStore
     let shazam: ShazamRecognizer
+    let audd: AudDRecognition
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         let mode = model.mode
@@ -136,20 +138,40 @@ struct IslandRootView: View {
                 if mode == .expanded {
                     ExpandedContent(model: model, timer: timer, music: music, lang: lang)
                         .frame(width: IslandViewModel.expandedWidth, height: model.contentHeight)
+                        .overlay(alignment: .bottom) {
+                            if let toast = model.toast {
+                                HStack(spacing: 7) {
+                                    ToastLeading(toast: toast)
+                                    ToastTrailing(toast: toast)
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 7)
+                                .background(.regularMaterial, in: Capsule())
+                                .padding(.bottom, 10)
+                                .allowsHitTesting(false)
+                                .transition(.opacity)
+                            }
+                        }
                         .padding(.top, model.bodyTop - model.menuBarHeight)
                         .transition(.asymmetric(
-                            insertion: .opacity.combined(with: .offset(y: -14)).combined(with: .scale(scale: 0.96, anchor: .top))
+                            insertion: reduceMotion ? .opacity.animation(.easeOut(duration: 0.16))
+                                : .opacity.combined(with: .offset(y: -14)).combined(with: .scale(scale: 0.96, anchor: .top))
                                 .animation(.easeOut(duration: 0.26).delay(0.08)),
                             // The shape still contracts. Remove the expanded widgets immediately
                             // so their idle timer cannot show through the shrinking panel.
                             removal: .identity))
+                } else if let banner = model.banner, mode == .compact {
+                    PowerBannerView(banner: banner, model: model, lang: lang)
+                        .frame(width: IslandViewModel.bannerWidth, height: IslandViewModel.bannerHeight)
+                        .padding(.top, model.bodyTop - model.menuBarHeight)
+                        .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(y: -8)))
                 }
             }
             .frame(width: window.width, height: window.height, alignment: .top)
             .clipShape(shape)
         }
         .frame(width: window.width, height: window.height, alignment: .top)
-        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: model.isHovering)
+        .animation(reduceMotion ? .easeOut(duration: 0.12) : .spring(response: 0.3, dampingFraction: 0.7), value: model.isHovering)
         .environment(\.colorScheme, .dark)
         .environmentObject(model)
         .environmentObject(timer)
@@ -162,6 +184,7 @@ struct IslandRootView: View {
         .environmentObject(audioMonitor)
         .environmentObject(clipboard)
         .environmentObject(shazam)
+        .environmentObject(audd)
     }
 }
 
@@ -244,6 +267,8 @@ struct ExpandedContent: View {
     @ObservedObject var music: MusicController
     @ObservedObject var lang: LanguageSettings
     @EnvironmentObject var stopwatch: Stopwatch
+    @EnvironmentObject private var audd: AudDRecognition
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(spacing: 0) {
@@ -267,7 +292,7 @@ struct ExpandedContent: View {
                 }
                 PageSwitcher(model: model, lang: lang)
             }
-            .padding(.horizontal, 22)
+            .padding(.horizontal, model.page == .widgets ? 15 : 22)
             .padding(.top, 10)
             .frame(height: 32)
 
@@ -307,16 +332,19 @@ struct ExpandedContent: View {
                             }
                         case .clipboard:
                             ClipboardPage(model: model, lang: lang)
-                                .transition(.opacity.combined(with: .offset(y: 8)))
-                        case .shazam:
-                            ShazamPage(model: model, lang: lang)
-                                .transition(.opacity.combined(with: .offset(y: 8)))
+                                .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(y: 8)))
+                        case .shazam(let status):
+                            ShazamPage(model: model, lang: lang, systemStatus: status, audd: audd)
+                                .transition(.opacity)
+                        case .audd:
+                            ShazamPage(model: model, lang: lang, startWithAudD: true, audd: audd)
+                                .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(y: 8)))
                         }
                     }
                     .transition(.opacity.combined(with: .offset(x: 12)))
                 }
             }
-            .padding(.horizontal, 20)
+            .padding(.horizontal, model.page == .widgets ? IslandViewModel.widgetsHorizontalPadding : 20)
             .padding(.top, model.page == .widgets ? 6 : 8)
             .padding(.bottom, model.page == .widgets ? 14 : 16)
             .frame(maxHeight: .infinity, alignment: .top)
@@ -653,17 +681,20 @@ struct ArtworkView: View {
 }
 
 struct PressableStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .contentShape(Rectangle())
-            .scaleEffect(configuration.isPressed ? 0.88 : 1)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.88 : 1)
             .opacity(configuration.isPressed ? 0.75 : 1)
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 
 struct PillStyle: ButtonStyle {
     var highlighted = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -672,8 +703,8 @@ struct PillStyle: ButtonStyle {
             .frame(height: 20)
             .background(Capsule().fill(highlighted ? Color.orange.opacity(0.35) : .white.opacity(configuration.isPressed ? 0.24 : 0.12)))
             .foregroundStyle(.white.opacity(0.9))
-            .scaleEffect(configuration.isPressed ? 0.94 : 1)
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.94 : 1)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 
