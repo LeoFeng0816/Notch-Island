@@ -7,7 +7,9 @@ background = defines["background"]
 if "icon" in defines:
     icon = defines["icon"]
 default_view = "icon-view"
-window_rect = ((120, 110), (620, 360))
+# Window bounds include Finder's title bar; the 620 x 380 background keeps all
+# text above the bottom 56 pt (see maxTitleBar in scripts/render_artwork.swift).
+window_rect = ((120, 110), (620, 380))
 show_toolbar = False
 show_status_bar = False
 show_sidebar = False

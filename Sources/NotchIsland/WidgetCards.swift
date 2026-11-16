@@ -46,6 +46,7 @@ struct WidgetsPage: View {
         case .timer: TimerCard(lang: lang)
         case .calendar: CalendarCard(lang: lang)
         case .clock: ClockCard(lang: lang)
+        case .pomodoro: PomodoroCard(lang: lang)
         }
     }
 

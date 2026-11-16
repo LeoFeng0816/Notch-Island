@@ -36,6 +36,8 @@ final class FirstMouseHostingView<Content: View>: NSHostingView<Content> {
 @MainActor
 final class IslandController {
     let timer = CountdownTimer()
+    /// Pomodoro cycle; independent of `timer` (neither stops or pauses the other).
+    let pomodoro = PomodoroTimer()
     let music = MusicController()
     let audioMonitor = AudioLevelMonitor()
     let clipboard = ClipboardStore()
@@ -84,7 +86,8 @@ final class IslandController {
 
     init() {
         let screen = NotchGeometry.preferredScreen() ?? NSScreen.screens[0]
-        model = IslandViewModel(geometry: NotchGeometry(screen: screen), timer: timer, music: music, stopwatch: stopwatch)
+        model = IslandViewModel(geometry: NotchGeometry(screen: screen), timer: timer, music: music, stopwatch: stopwatch,
+                                pomodoro: pomodoro)
         widgetData = WidgetDataCenter(settings: widgetSettings)
         power = PowerAlertController(model: model)
         model.onOpenSettings = { [weak self] in self?.openSettings() }
@@ -105,6 +108,11 @@ final class IslandController {
             .store(in: &cancellables)
         installMouseMonitors()
         widgetData.start()
+        // One sound and one short island message per automatic Pomodoro transition.
+        // No system notifications are posted; caught-up (late) transitions stay silent.
+        pomodoro.events
+            .sink { [weak self] event in self?.announce(event) }
+            .store(in: &cancellables)
 
         // Battery is read locally (IOKit); only observe it while the widget or power alerts are on.
         Publishers.CombineLatest(widgetSettings.$enabled.map { $0.contains(.battery) }, power.$enabled)
@@ -141,6 +149,8 @@ final class IslandController {
                                                           object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.layoutPanel()
+                // Catch up a Pomodoro session that ended during sleep (silently, see PomodoroTimer).
+                self?.pomodoro.refresh()
                 self?.battery.refresh()
                 self?.widgetData.refreshDue()
                 if self?.calendar.isActive == true { self?.calendar.refresh() }
@@ -157,6 +167,12 @@ final class IslandController {
     }
 
     var isExpanded: Bool { model.isExpanded }
+
+    private func announce(_ event: PomodoroTimer.Event) {
+        guard let toast = PomodoroAnnouncement.toast(for: event, lang: lang, longBreakMinutes: pomodoro.longBreakMinutes) else { return }
+        NSSound(named: "Glass")?.play()
+        model.showToast(toast, duration: 3)
+    }
 
     func setExpanded(_ expanded: Bool) {
         if expanded, let front = NSWorkspace.shared.frontmostApplication,
@@ -380,7 +396,7 @@ final class IslandController {
                                      music: self.music, calendar: self.calendar, location: self.location,
                                      audioMonitor: self.audioMonitor, stockSearch: self.stockSearch,
                                      clipboard: self.clipboard, power: self.power, audDRecognition: self.audd,
-                                     songFinder: self.songFinder, updater: self.updater,
+                                     songFinder: self.songFinder, updater: self.updater, pomodoro: self.pomodoro,
                                      useCurrentLocation: { [weak self] in self?.useCurrentLocationForWeather() },
                                      device: self.device,
                                      weatherProvider: OpenMeteoProvider(client: URLSessionHTTPClient()),

@@ -133,6 +133,12 @@ enum L10nKey: CaseIterable {
     case updNetwork, updRateLimited, updNoRelease, updHTTP, updBadResponse, updPrerelease
     case updBadTag, updUntrusted, updUnknownCurrent, updRedirect, updSizeMismatch, updChecksumMismatch
     case updDisk, updDownloadCancelled
+    // 0.1.3: Pomodoro
+    case pomodoro, pomoFocus, pomoShortBreak, pomoLongBreak, pomoReady, pomoBreakOver
+    case pomoCompleted, pomoSetA11y, pomoA11yRemaining, pomoA11ySeparator, pomoA11yFocusDone, pomoA11yBreakOver
+    case pomoStartFocus, pomoResetSession, pomoResetSessionHelp, pomoResetCount, pomoResetCountHelp
+    case pomoSkipBreak, pomoSkipBreakHelp, pomoLongBreakLength, pomoLongBreakHelp, pomoLongBreakShorter, pomoLongBreakLonger
+    case pomoRules, pomoMenuStart, pomoMenuReset
 }
 
 @MainActor
@@ -721,5 +727,32 @@ final class LanguageSettings: ObservableObject {
         .updChecksumMismatch: ("The download’s SHA-256 doesn’t match GitHub’s digest. It was deleted; nothing was installed.", "下載檔案的 SHA-256 與 GitHub 的摘要不符，已刪除；沒有安裝任何東西。", "下载文件的 SHA-256 与 GitHub 的摘要不符，已删除；没有安装任何东西。"),
         .updDisk: ("Couldn’t save the download: %@", "無法儲存下載的檔案：%@", "无法保存下载的文件：%@"),
         .updDownloadCancelled: ("Download cancelled; the partial file was deleted.", "已取消下載，未完成的檔案已刪除。", "已取消下载，未完成的文件已删除。"),
+        // 0.1.3: Pomodoro
+        .pomodoro: ("Pomodoro", "番茄鐘", "番茄钟"),
+        .pomoFocus: ("Focus", "專注", "专注"),
+        .pomoShortBreak: ("Short break", "短休息", "短休息"),
+        .pomoLongBreak: ("Long break", "長休息", "长休息"),
+        .pomoReady: ("Ready to focus", "準備專注", "准备专注"),
+        .pomoBreakOver: ("Break over", "休息結束", "休息结束"),
+        .pomoCompleted: ("%@ done", "已完成 %@", "已完成 %@"),
+        .pomoSetA11y: ("%@ of %@ focus sessions done toward the long break", "距離長休息：已完成 %@／%@ 段專注", "距离长休息：已完成 %@／%@ 段专注"),
+        .pomoA11yRemaining: ("%@ left", "剩下 %@", "剩余 %@"),
+        .pomoA11ySeparator: (". ", "。", "。"),
+        .pomoA11yFocusDone: ("Focus session complete. %@ started: %@ minutes.", "專注完成。%@開始：%@ 分鐘。", "专注完成。%@开始：%@ 分钟。"),
+        .pomoA11yBreakOver: ("Pomodoro break over. Press Start for the next focus.", "番茄鐘休息結束。按「開始專注」進行下一段專注。", "番茄钟休息结束。点按“开始专注”进行下一段专注。"),
+        .pomoStartFocus: ("Start focus", "開始專注", "开始专注"),
+        .pomoResetSession: ("Reset session", "重設這一段", "重置这一段"),
+        .pomoResetSessionHelp: ("Stops this session without counting it. Completed sessions are kept.", "停止目前這一段，不計入完成；已完成的次數會保留。", "停止当前这一段，不计入完成；已完成的次数会保留。"),
+        .pomoResetCount: ("Reset count", "重設次數", "重置次数"),
+        .pomoResetCountHelp: ("Clears the completed sessions and starts a new set of four.", "清除已完成次數，從新的一組四段開始。", "清除已完成次数，从新的一组四段开始。"),
+        .pomoSkipBreak: ("Skip break", "略過休息", "跳过休息"),
+        .pomoSkipBreakHelp: ("Ends the break now. The next focus starts when you press Start.", "立即結束休息。按下「開始」時才開始下一段專注。", "立即结束休息。点按“开始”时才开始下一段专注。"),
+        .pomoLongBreakLength: ("Long break %@ min", "長休息 %@ 分鐘", "长休息 %@ 分钟"),
+        .pomoLongBreakHelp: ("Taken after every 4 completed focus sessions; 15–30 minutes.", "每完成 4 段專注後休息；可設 15–30 分鐘。", "每完成 4 段专注后休息；可设 15–30 分钟。"),
+        .pomoLongBreakShorter: ("Long break 1 minute shorter", "長休息減少 1 分鐘", "长休息减少 1 分钟"),
+        .pomoLongBreakLonger: ("Long break 1 minute longer", "長休息增加 1 分鐘", "长休息增加 1 分钟"),
+        .pomoRules: ("Focus 25 min, then a 5-min short break. After every 4 completed focus sessions the break is a long one (15–30 min). A focus session counts as completed only when its full 25 minutes run out; pausing, resetting and skipping never count. A break starts by itself when a focus completes; the next focus waits for you. Pause freezes the time left and Resume continues it. Reset stops the current session without counting it (completed sessions are kept); when nothing is running, Reset clears the count. Skip ends a break early; skipping a long break still starts a new set. Time keeps running while the Mac sleeps and isn’t affected by changing the clock; a session that ended during sleep is caught up quietly. The Pomodoro and the countdown timer run independently: neither stops or pauses the other. A sound and a short message in the notch mark each automatic change; no notifications are posted. Only the long-break length is saved; quitting the app ends the session.", "專注 25 分鐘後短休息 5 分鐘；每完成 4 段專注，下一次改為長休息（15–30 分鐘）。只有完整走完 25 分鐘的專注才算完成；暫停、重設和略過都不會計入。專注完成後休息會自動開始，下一段專注則等你按下才開始。「暫停」會凍結剩餘時間，「繼續」從原處接著算。「重設」會停止目前這一段且不計入（已完成次數保留）；沒有進行中的時段時，「重設」會清除次數。「略過」會提早結束休息；略過長休息後仍從新的一組開始。Mac 睡眠時時間照常計算，也不受更改系統時鐘影響；睡眠期間結束的時段會在喚醒後安靜補上。番茄鐘與倒數計時器各自獨立，彼此不會停止或暫停對方。每次自動切換會有提示音與瀏海上的簡短訊息，不會發送通知。只會儲存長休息長度；結束 App 會結束目前時段。", "专注 25 分钟后短休息 5 分钟；每完成 4 段专注，下一次改为长休息（15–30 分钟）。只有完整走完 25 分钟的专注才算完成；暂停、重置和跳过都不会计入。专注完成后休息会自动开始，下一段专注则等你点按才开始。“暂停”会冻结剩余时间，“继续”从原处接着算。“重置”会停止当前这一段且不计入（已完成次数保留）；没有进行中的时段时，“重置”会清除次数。“跳过”会提前结束休息；跳过长休息后仍从新的一组开始。Mac 睡眠时时间照常计算，也不受更改系统时钟影响；睡眠期间结束的时段会在唤醒后安静补上。番茄钟与倒计时器各自独立，彼此不会停止或暂停对方。每次自动切换会有提示音与刘海上的简短消息，不会发送通知。只会保存长休息时长；退出 App 会结束当前时段。"),
+        .pomoMenuStart: ("Start Pomodoro Focus", "開始番茄鐘專注", "开始番茄钟专注"),
+        .pomoMenuReset: ("Reset Pomodoro Session", "重設番茄鐘這一段", "重置番茄钟这一段"),
     ]
 }

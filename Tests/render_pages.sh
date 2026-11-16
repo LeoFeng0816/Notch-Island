@@ -12,4 +12,4 @@ swiftc -Onone -swift-version 5 -parse-as-library -module-name NotchIslandRender 
   -sdk "$(xcrun --show-sdk-path --sdk macosx)" -target "$(uname -m)-apple-macos14.0" \
   -framework AppKit -framework SwiftUI -framework Combine -framework IOKit -framework Security -framework LocalAuthentication \
   -o "$ROOT/build/tests/render-pages" "${SOURCES[@]}" "$ROOT/Tests/render_pages.swift"
-"$ROOT/build/tests/render-pages" "$OUT"
+"$ROOT/build/tests/render-pages" "$OUT" "$@"

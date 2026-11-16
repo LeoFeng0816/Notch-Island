@@ -63,7 +63,7 @@ final class OfflineHTTP: HTTPClient, @unchecked Sendable {
 }
 
 @MainActor func run() async {
-    let out = URL(fileURLWithPath: CommandLine.arguments.dropFirst().first ?? "build/qa/pages", isDirectory: true)
+    let out = URL(fileURLWithPath: CommandLine.arguments.dropFirst().first(where: { !$0.hasPrefix("--") }) ?? "build/qa/pages", isDirectory: true)
     try? FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
     let lang = LanguageSettings.shared
     let savedLanguage = lang.language
@@ -175,7 +175,185 @@ final class OfflineHTTP: HTTPClient, @unchecked Sendable {
     }
 }
 
+// MARK: - 0.1.3: Pomodoro (offline renders; synthetic data, fake clock, no capture)
+
+final class RenderClock { var t: TimeInterval = 50_000 }
+
+/// Synthetic album cover (gradient), so "music playing" needs no player or network.
+@MainActor func syntheticArtwork() -> Data {
+    let image = NSImage(size: NSSize(width: 64, height: 64), flipped: false) { rect in
+        NSGradient(colors: [NSColor(srgbRed: 0.35, green: 0.45, blue: 0.95, alpha: 1), NSColor(srgbRed: 0.9, green: 0.4, blue: 0.6, alpha: 1)])?
+            .draw(in: rect, angle: 45)
+        return true
+    }
+    return NSBitmapImageRep(data: image.tiffRepresentation!)!.representation(using: .png, properties: [:])!
+}
+
+@MainActor func renderPomodoro(out: URL) async {
+    let lang = LanguageSettings.shared
+    let suite = "NotchIslandRender.pomodoro.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let geometry = NotchGeometry(screenFrame: NSRect(x: 0, y: 0, width: 1512, height: 982), hasNotch: true,
+                                 notchRect: NSRect(x: 662, y: 950, width: 185, height: 32))
+    let clock = RenderClock()
+    let pomodoro = PomodoroTimer(defaults: defaults, now: { clock.t }, autoTick: false)
+    let timer = CountdownTimer(defaults: defaults)
+    let stopwatch = Stopwatch(defaults: defaults)
+    let music = MusicController(defaults: defaults)
+    let model = IslandViewModel(geometry: geometry, timer: timer, music: music, stopwatch: stopwatch, pomodoro: pomodoro)
+    model.reduceMotion = { true } // no springs mid-render
+    let widgetSettings = WidgetSettings(defaults: defaults, secrets: MemorySecretStore())
+    for kind in WidgetKind.allCases { widgetSettings.setEnabled(kind, false) }
+    // No battery/clock/weather: their real readings would be device data or "Loading…".
+    for kind in [WidgetKind.timer, .stopwatch, .pomodoro] { widgetSettings.setEnabled(kind, true) }
+    let tempClipboard = FileManager.default.temporaryDirectory.appendingPathComponent("ni-render-clip-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: tempClipboard) }
+    let clipboard = ClipboardStore(defaults: defaults, pasteboard: NSPasteboard(name: NSPasteboard.Name("NotchIslandRender.\(UUID().uuidString)")),
+                                   directory: tempClipboard)
+    let audd = AudDRecognition(secrets: MemorySecretStore(), defaults: defaults, session: AudDService.makeSession(protocolClasses: [RenderMock.self]),
+                               audio: ToneSource())
+    let songFinder = SongFinderRecognition(defaults: defaults, session: SongFinderService.makeSession(protocolClasses: [SongFinderRender.self]),
+                                           audio: TwoTones())
+    let battery = BatteryMonitor()
+    let data = WidgetDataCenter(settings: widgetSettings, client: OfflineHTTP())
+    let root = IslandRootView(model: model, timer: timer, music: music, lang: lang, stopwatch: stopwatch, battery: battery, data: data,
+                              settings: widgetSettings, calendar: CalendarStore(statusProvider: { .notDetermined }), location: LocationProvider(),
+                              audioMonitor: AudioLevelMonitor(defaults: defaults), clipboard: clipboard, shazam: ShazamRecognizer(),
+                              audd: audd, songFinder: songFinder)
+    let artwork = syntheticArtwork()
+    func setMusic(playing: Bool?) {
+        guard let playing else { music.applyForTesting(nil); return }
+        music.applyForTesting(.init(source: .system, track: .init(title: "Sample Song", artist: "Sample Artist", album: "Sample Album", duration: nil),
+                                    isPlaying: playing, position: 63, sampledAt: Date(), artworkData: artwork))
+    }
+    func settle() async { for _ in 0..<12 { await Task.yield(); try? await Task.sleep(for: .milliseconds(15)) } }
+    /// Menu bar (light, with a few fake status items) + the compact island.
+    func compact(_ name: String) {
+        let window = model.windowSize
+        let scene = ZStack(alignment: .top) {
+            Rectangle().fill(Color(white: 0.9)).frame(height: model.menuBarHeight)
+            HStack {
+                Text("Finder  File  Edit  View").font(.system(size: 13, weight: .medium)).foregroundStyle(.black.opacity(0.8))
+                Spacer()
+                Text("Wi-Fi  100%  Mon 9:41").font(.system(size: 13, weight: .medium)).foregroundStyle(.black.opacity(0.8))
+            }
+            .padding(.horizontal, 12).frame(height: model.menuBarHeight)
+            root
+        }
+        .frame(width: window.width, height: model.menuBarHeight + 16, alignment: .top)
+        .clipped()
+        render(scene, name, out: out, size: CGSize(width: window.width, height: model.menuBarHeight + 16))
+    }
+    func expanded(_ name: String) {
+        let window = model.windowSize
+        render(root.frame(width: window.width, height: window.height, alignment: .top).background(Color(white: 0.85)), name, out: out,
+               size: CGSize(width: window.width, height: model.menuBarHeight + IslandViewModel.maxContentHeight + 10))
+    }
+    func reset() async {
+        model.setExpanded(false)
+        pomodoro.reset(); pomodoro.reset()
+        timer.reset(); stopwatch.reset(); setMusic(playing: nil)
+        await settle()
+    }
+    /// Two completed sessions, then 6:18 into the third focus (18:42 left).
+    func focusState() {
+        for _ in 0..<2 { pomodoro.start(); clock.t += 1500; pomodoro.refresh(); pomodoro.skipBreak() }
+        pomodoro.start(); clock.t += 378; pomodoro.refresh()
+    }
+
+    for (language, code) in [(AppLanguage.english, "en"), (.traditionalChinese, "zh-Hant"), (.simplifiedChinese, "zh-Hans")] {
+        lang.language = language
+        let p = "\(code)-pomodoro"
+
+        await reset(); focusState(); await settle()
+        compact("\(p)-compact-alone-focus")
+        pomodoro.pause(); await settle()
+        compact("\(p)-compact-alone-paused")
+        pomodoro.resume(); clock.t += 1122; pomodoro.refresh(); clock.t += 110; pomodoro.refresh(); await settle()
+        compact("\(p)-compact-alone-short-break")
+        clock.t += 190; pomodoro.refresh(); await settle()
+        compact("\(p)-compact-break-over")
+
+        await reset(); focusState(); setMusic(playing: true); await settle()
+        compact("\(p)-compact-with-music")
+        setMusic(playing: false); await settle()
+        compact("\(p)-compact-music-paused")
+        setMusic(playing: true); timer.start(minutes: 5); await settle()
+        compact("\(p)-compact-music-and-timer")
+        setMusic(playing: nil); await settle()
+        compact("\(p)-compact-with-timer")
+
+        // Expanded: Live Activities with music + Pomodoro, and with three tools.
+        setMusic(playing: true); timer.reset(); await settle()
+        model.setExpanded(true); await settle()
+        expanded("\(p)-expanded-with-music")
+        model.setExpanded(false)
+        timer.start(minutes: 5); stopwatch.start(); await settle()
+        model.setExpanded(true); model.activityTool = .pomodoro; await settle()
+        expanded("\(p)-expanded-three-tools")
+
+        // Widgets page with the Pomodoro card: ready, focus, paused, short and long break.
+        await reset()
+        func widgets(_ state: String) async {
+            model.setExpanded(true); model.page = .widgets; await settle()
+            expanded("\(p)-widgets-\(state)")
+            model.setExpanded(false)
+        }
+        await widgets("ready")
+        focusState(); await widgets("focus")
+        pomodoro.pause(); await widgets("paused")
+        pomodoro.resume(); clock.t += 1122; pomodoro.refresh(); await widgets("short-break")
+        pomodoro.skipBreak()
+        pomodoro.start(); clock.t += 1500; pomodoro.refresh(); clock.t += 240; pomodoro.refresh() // 4th → long break
+        await widgets("long-break")
+    }
+    await reset()
+}
+
+/// Menu-bar icon on simulated light and dark menu bars, 1x and 2x (template tinting simulated).
+@MainActor func renderStatusIcon(out: URL) {
+    for dark in [false, true] {
+        for scale in [1, 2] {
+            let width = 160, height = 24
+            let ctx = CGContext(data: nil, width: width * scale, height: height * scale, bitsPerComponent: 8, bytesPerRow: 0,
+                                space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            ctx.scaleBy(x: CGFloat(scale), y: CGFloat(scale))
+            ctx.setFillColor(dark ? CGColor(srgbRed: 0.13, green: 0.13, blue: 0.15, alpha: 1) : CGColor(srgbRed: 0.94, green: 0.94, blue: 0.95, alpha: 1))
+            ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
+            let ink = dark ? NSColor.white : NSColor.black.withAlphaComponent(0.85)
+            for (index, image) in [StatusBarIcon.image(), NSImage(systemSymbolName: "wifi", accessibilityDescription: nil)!,
+                                   NSImage(systemSymbolName: "battery.75percent", accessibilityDescription: nil)!].enumerated() {
+                let tinted = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { rect in
+                    image.draw(in: rect.insetBy(dx: index == 0 ? 0 : 1, dy: index == 0 ? 0 : 3))
+                    ink.set()
+                    rect.fill(using: .sourceAtop)
+                    return true
+                }
+                tinted.draw(in: NSRect(x: 12 + index * 32, y: 3, width: 18, height: 18))
+            }
+            NSGraphicsContext.restoreGraphicsState()
+            let png = NSBitmapImageRep(cgImage: ctx.makeImage()!).representation(using: .png, properties: [:])!
+            let name = "status-icon-\(dark ? "dark" : "light")-\(scale)x"
+            try? png.write(to: out.appendingPathComponent("\(name).png"))
+            print("• \(name).png")
+        }
+    }
+}
+
 @main
 struct RenderPages {
-    static func main() async { await run() }
+    static func main() async {
+        // `--pomodoro-only` skips the older pages (quick QA of the 0.1.3 additions).
+        if !CommandLine.arguments.contains("--pomodoro-only") { await run() }
+        let out = URL(fileURLWithPath: CommandLine.arguments.dropFirst().first(where: { !$0.hasPrefix("--") }) ?? "build/qa/pages", isDirectory: true)
+        try? FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+        let lang = LanguageSettings.shared
+        let saved = lang.language
+        await renderPomodoro(out: out)
+        renderStatusIcon(out: out)
+        lang.language = saved
+    }
 }

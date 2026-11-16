@@ -8,6 +8,7 @@ import CoreLocation
 import EventKit
 import CoreAudio
 import CryptoKit
+import Combine
 
 // Minimal test runner compiled together with the app sources (see run_tests.sh).
 // Pass --live to also hit the real Open-Meteo / Alpha Vantage (demo key) endpoints.
@@ -284,7 +285,7 @@ await test("widgets: offline defaults, enable/reorder persisted") {
     s.move(.stopwatch, by: -4)
     s.move(.stopwatch, by: -1) // already first: no-op
     let reloaded = WidgetSettings(defaults: d, secrets: MemorySecretStore())
-    expect(reloaded.order == [.stopwatch, .weather, .battery, .stocks, .timer, .calendar, .clock], "order \(reloaded.order)")
+    expect(reloaded.order == [.stopwatch, .weather, .battery, .stocks, .timer, .calendar, .clock, .pomodoro], "order \(reloaded.order)")
     expect(reloaded.enabledInOrder == [.stopwatch, .weather, .battery, .timer], "enabled \(reloaded.enabledInOrder)")
     reloaded.setEnabled(.battery, false)
     expect(WidgetSettings(defaults: d, secrets: MemorySecretStore()).enabledInOrder == [.stopwatch, .weather, .timer], "disable persisted")
@@ -2712,8 +2713,8 @@ await test("packaging & publishing: purpose strings, .gitignore, secret scan nev
     // private 0.3.x builds, so the build number must keep increasing (0.3.2 was 5)
     // and nothing may key migrations on the marketing version.
     let info = try PropertyListSerialization.propertyList(from: Data(contentsOf: URL(fileURLWithPath: "Resources/Info.plist")), format: nil) as? [String: Any]
-    expect(info?["CFBundleShortVersionString"] as? String == "0.1.2", "review version is 0.1.2 (newer than the published v0.1.1)")
-    expect(Int(info?["CFBundleVersion"] as? String ?? "") ?? 0 > 7, "build number stays above v0.1.1 (7), v0.1.0 (6) and the private 0.3.2 (5) build")
+    expect(info?["CFBundleShortVersionString"] as? String == "0.1.3", "review version is 0.1.3 (newer than the published v0.1.2)")
+    expect(Int(info?["CFBundleVersion"] as? String ?? "") ?? 0 > 8, "build number stays above v0.1.2 (8), v0.1.1 (7), v0.1.0 (6) and the private 0.3.2 (5) build")
     expect(info?["CFBundleIdentifier"] as? String == "local.notchisland.app", "bundle ID unchanged, so existing settings and Keychain items are kept")
     let providers = try String(contentsOfFile: "Sources/NotchIsland/Providers.swift", encoding: .utf8)
     expect(providers.contains("\"NotchIsland/0.1 (macOS)\""), "User-Agent uses the release series")
@@ -3579,6 +3580,439 @@ await test("software update: controller flow, install location, backup of the cu
         expect(["Keep Both", "兩者都保留", "保留两者"].contains(where: lang.t(.updSteps).contains), "\(language): how to keep the original copy")
         expect(lang.t(.updPrivacy).contains("api.github.com"), "\(language): says what is contacted")
     }
+}
+
+// MARK: - 0.1.3: Pomodoro, compact layout, menu-bar icon, DMG text
+
+/// Fake monotonic clock (seconds) for the Pomodoro.
+final class Mono { var t: TimeInterval = 10_000 }
+
+@MainActor func makePomodoro(_ d: UserDefaults = freshDefaults(), clock: Mono) -> (PomodoroTimer, () -> [PomodoroTimer.Event], AnyCancellable) {
+    let p = PomodoroTimer(defaults: d, now: { clock.t }, autoTick: false)
+    var events: [PomodoroTimer.Event] = []
+    let sub = p.events.sink { events.append($0) }
+    return (p, { events }, sub)
+}
+
+await test("pomodoro: defaults, durations and the saved long-break length") {
+    let d = freshDefaults()
+    let clock = Mono()
+    let (p, events, sub) = makePomodoro(d, clock: clock)
+    _ = sub
+    expect(p.phase == .focus && p.runState == .ready && !p.isLive && !p.isSessionActive, "starts ready for a focus, not live")
+    expect(p.remaining == 25 * 60 && p.total == 25 * 60, "focus is 25 minutes")
+    expect(p.longBreakMinutes == 20, "long break defaults to 20 minutes")
+    expect(p.duration(of: .shortBreak) == 300 && p.duration(of: .longBreak) == 1200, "5-minute short, 20-minute long break")
+    expect(p.resetAction == nil && !p.canSkip, "nothing to reset or skip yet")
+    p.setLongBreakMinutes(25)
+    expect(PomodoroTimer(defaults: d, now: { clock.t }, autoTick: false).longBreakMinutes == 25, "long-break length saved")
+    for (stored, expected) in [(10, 20), (45, 20), (0, 20), (15, 15), (30, 30)] {
+        let s = freshDefaults(); s.set(stored, forKey: PomodoroTimer.longBreakKey)
+        expect(PomodoroTimer(defaults: s, now: { clock.t }, autoTick: false).longBreakMinutes == expected, "stored \(stored) → \(expected)")
+    }
+    for (asked, expected) in [(14, 15), (31, 30), (17, 17), (-5, 15), (1000, 30)] {
+        p.setLongBreakMinutes(asked)
+        expect(p.longBreakMinutes == expected, "any minute 15…30: \(asked) → \(expected)")
+    }
+    expect(events().isEmpty, "settings changes emit nothing")
+    let keys = d.dictionaryRepresentation().keys.filter { $0.hasPrefix("NotchIsland.pomodoro") }
+    expect(keys == [PomodoroTimer.longBreakKey], "only the long-break length is persisted: \(keys)")
+}
+
+await test("pomodoro: focus → short break → ready, each transition announced once") {
+    let clock = Mono()
+    let (p, events, sub) = makePomodoro(clock: clock)
+    _ = sub
+    p.start()
+    expect(p.runState == .running && p.phase == .focus && p.isLive, "focus running")
+    clock.t += 10 * 60; p.refresh()
+    expect(Int(p.remaining.rounded(.up)) == 15 * 60, "15 min left after 10")
+    clock.t += 15 * 60 - 0.5; p.refresh()
+    expect(p.phase == .focus && p.completedTotal == 0, "not complete half a second early")
+    clock.t += 0.5; p.refresh(); p.refresh(); p.refresh()
+    expect(p.phase == .shortBreak && p.runState == .running && p.remaining == 300, "short break starts by itself, 5:00")
+    expect(p.completedTotal == 1 && p.completedInSet == 1 && p.setProgress == 1, "one completed focus")
+    expect(events() == [.focusCompleted(total: 1, next: .shortBreak, late: false)], "exactly one event: \(events())")
+    expect(p.canSkip && p.resetAction == .session, "break can be skipped or reset")
+    clock.t += 300; p.refresh(); p.refresh()
+    expect(p.runState == .ready && p.phase == .focus && p.remaining == 1500, "back to ready; the next focus waits")
+    expect(p.notice?.endedBreak == .shortBreak && p.isLive, "'break over' shown for a moment")
+    expect(events().count == 2 && events().last == .breakEnded(.shortBreak, late: false), "break end announced once")
+    clock.t += 3600; p.refresh()
+    expect(p.runState == .ready && p.completedTotal == 1, "never starts a focus by itself (nothing counted while away)")
+    expect(p.notice == nil && !p.isLive, "notice gone after 12 s; no longer a live activity")
+    expect(events().count == 2, "no further events")
+}
+
+await test("pomodoro: long break after every fourth completed focus") {
+    let clock = Mono()
+    let (p, events, sub) = makePomodoro(clock: clock)
+    _ = sub
+    @MainActor func focus() { p.start(); clock.t += 1500; p.refresh() }
+    for n in 1...3 {
+        focus()
+        expect(p.phase == .shortBreak && p.completedInSet == n, "focus \(n) → short break")
+        expect(p.nextBreakIsLong == (n == 3), "the next break is long only after the third")
+        clock.t += 300; p.refresh()
+    }
+    focus()
+    expect(p.phase == .longBreak && p.total == 1200 && p.runState == .running, "fourth completed focus → 20-minute long break")
+    expect(p.completedInSet == 0 && p.setProgress == 4 && p.completedTotal == 4, "set shown full during the long break, restarts after")
+    expect(events().filter { if case .focusCompleted(_, .longBreak, _) = $0 { return true }; return false }.count == 1, "one long break offered")
+    clock.t += 1200; p.refresh()
+    expect(p.runState == .ready && p.setProgress == 0 && p.notice?.endedBreak == .longBreak, "long break over, new set")
+    focus()
+    expect(p.phase == .shortBreak && p.completedTotal == 5 && p.completedInSet == 1, "fifth focus → short break again")
+    clock.t += 300; p.refresh()
+    for _ in 0..<2 { focus(); clock.t += p.remaining; p.refresh() }
+    focus()
+    expect(p.completedTotal == 8 && p.phase == .longBreak, "eighth focus → long break again")
+}
+
+await test("pomodoro: pause/resume, reset and skip never count as completed") {
+    let clock = Mono()
+    let (p, events, sub) = makePomodoro(clock: clock)
+    _ = sub
+    p.start(); clock.t += 600; p.pause()
+    expect(p.runState == .paused && p.remaining == 900 && p.isLive, "paused with 15:00 left, still live")
+    clock.t += 7200; p.refresh()
+    expect(p.remaining == 900 && p.completedTotal == 0 && events().isEmpty, "paused time doesn't run or count")
+    p.pause()
+    expect(p.runState == .paused, "pause twice is harmless")
+    p.resume(); clock.t += 899; p.refresh()
+    expect(p.phase == .focus && Int(p.remaining.rounded(.up)) == 1, "resumes where it stopped")
+    clock.t += 1; p.refresh()
+    expect(p.completedTotal == 1 && events().count == 1, "only the real end counts (once)")
+
+    // Reset during a session: not counted, counts kept.
+    p.skipBreak()
+    expect(p.runState == .ready && p.completedTotal == 1 && p.completedInSet == 1, "skip short break: count unchanged")
+    p.start(); clock.t += 1499; p.refresh()
+    expect(p.resetAction == .session, "reset ends the session")
+    p.reset()
+    expect(p.runState == .ready && p.phase == .focus && p.completedTotal == 1 && p.completedInSet == 1, "reset 1 s before the end: not counted")
+    p.start(); clock.t += 300; p.pause(); p.reset()
+    expect(p.runState == .ready && p.completedTotal == 1, "reset while paused: not counted")
+    p.skipBreak()
+    expect(p.runState == .ready && p.completedTotal == 1, "focus can't be skipped")
+    p.start(); clock.t += 100; p.skipBreak()
+    expect(p.runState == .running && p.phase == .focus, "skip does nothing during focus")
+    p.reset()
+    expect(p.resetAction == .count, "with nothing running, Reset clears the count")
+    p.reset()
+    expect(p.completedTotal == 0 && p.completedInSet == 0 && p.resetAction == nil, "count cleared")
+    expect(events().count == 1, "no event for pause, resume, reset or skip")
+
+    // Skipping the long break starts a new set.
+    for _ in 0..<4 { p.start(); clock.t += 1500; p.refresh(); if p.phase == .shortBreak { p.skipBreak() } }
+    expect(p.phase == .longBreak, "long break")
+    clock.t += 60; p.skipBreak()
+    expect(p.runState == .ready && p.completedInSet == 0 && p.completedTotal == 4, "skip long break: new set, total kept")
+    p.start(); clock.t += 1500; p.refresh()
+    expect(p.phase == .shortBreak, "after a skipped long break the next break is short")
+    p.reset()
+    expect(p.runState == .ready && p.completedInSet == 1, "reset during a short break keeps the set progress")
+}
+
+await test("pomodoro: sleep and clock changes — monotonic time, quiet catch-up, no duplicates") {
+    let clock = Mono()
+    let (p, events, sub) = makePomodoro(clock: clock)
+    _ = sub
+    p.start()
+    clock.t += 27 * 60 // asleep for 27 minutes
+    p.refresh()
+    expect(p.phase == .shortBreak && p.completedTotal == 1, "focus that ended during sleep counts (its 25 minutes ran)")
+    expect(Int(p.remaining.rounded(.up)) == 180, "break timed from when the focus ended: 3:00 left")
+    expect(events() == [.focusCompleted(total: 1, next: .shortBreak, late: true)], "caught up quietly")
+    clock.t += 3 * 60; p.refresh()
+    expect(p.runState == .ready && p.notice?.endedBreak == .shortBreak, "awake for the break's end: normal")
+    expect(events().last?.late == false, "on-time event")
+
+    let clock2 = Mono()
+    let (q, events2, sub2) = makePomodoro(clock: clock2)
+    _ = sub2
+    q.start(); clock2.t += 3 * 3600; q.refresh(); q.refresh()
+    expect(q.runState == .ready && q.completedTotal == 1 && q.notice == nil && !q.isLive, "slept through focus and break: ready, no notice")
+    expect(events2() == [.focusCompleted(total: 1, next: .shortBreak, late: true), .breakEnded(.shortBreak, late: true)],
+           "at most two catch-up events, never a focus started by itself: \(events2())")
+    expect(PomodoroAnnouncement.toast(for: events2()[0], lang: LanguageSettings.shared, longBreakMinutes: 20) == nil
+           && PomodoroAnnouncement.toast(for: events2()[1], lang: LanguageSettings.shared, longBreakMinutes: 20) == nil,
+           "late transitions: no message, no sound")
+
+    // A tick 3 s late is still on time; 10 s late is a catch-up.
+    let clock3 = Mono()
+    let (r, events3, sub3) = makePomodoro(clock: clock3)
+    _ = sub3
+    r.start(); clock3.t += 1503; r.refresh()
+    clock3.t += 297 + 10; r.refresh()
+    expect(events3().map(\.late) == [false, true], "late threshold \(PomodoroTimer.lateThreshold) s: \(events3())")
+
+    // Wall clock: the model reads only the injected monotonic clock.
+    let source = try String(contentsOfFile: "Sources/NotchIsland/Pomodoro.swift", encoding: .utf8)
+    expect(!source.contains("Date()") && !source.contains("timeIntervalSince1970") && !source.contains("Date.now"),
+           "Pomodoro never reads the wall clock")
+    expect(source.contains("ContinuousClock"), "production clock keeps counting during sleep")
+    let a = PomodoroTimer.monotonicNow(); try await Task.sleep(for: .milliseconds(20)); let b = PomodoroTimer.monotonicNow()
+    expect(b > a && b - a < 1, "monotonic clock advances")
+}
+
+await test("pomodoro: changing the long break during a long break") {
+    let clock = Mono()
+    let (p, events, sub) = makePomodoro(clock: clock)
+    _ = sub
+    for _ in 0..<4 { p.start(); clock.t += 1500; p.refresh(); if p.phase == .shortBreak { p.skipBreak() } }
+    expect(p.phase == .longBreak && p.total == 1200, "20-minute long break")
+    clock.t += 600; p.setLongBreakMinutes(15)
+    expect(p.total == 900 && Int(p.remaining.rounded(.up)) == 300, "shortened to 15: 5 min left")
+    p.setLongBreakMinutes(30)
+    expect(p.total == 1800 && Int(p.remaining.rounded(.up)) == 1200, "lengthened to 30: 20 min left")
+    p.pause(); clock.t += 1000
+    p.setLongBreakMinutes(25)
+    expect(p.runState == .paused && Int(p.remaining.rounded(.up)) == 900, "paused: 25 − 10 elapsed")
+    p.resume(); clock.t += 600; p.refresh()
+    let before = events().count
+    p.setLongBreakMinutes(15) // 16 minutes already used
+    expect(p.runState == .ready && events().count == before + 1 && events().last == .breakEnded(.longBreak, late: false),
+           "shorter than the time already rested: break ends now, once")
+    p.setLongBreakMinutes(20)
+    expect(p.runState == .ready && events().count == before + 1, "changing it while ready does nothing else")
+    p.start(); clock.t += 60; p.setLongBreakMinutes(28)
+    expect(p.phase == .focus && p.remaining == 1440, "doesn't touch a focus session")
+}
+
+await test("pomodoro: compact layout for every combination of activities") {
+    let phases: [CountdownTimer.Phase] = [.idle, .running, .paused, .finished]
+    func legacy(_ music: Bool, _ timer: CountdownTimer.Phase, _ watch: Bool) -> CompactLayout {
+        // 0.1.2 CompactContent rules, kept as the reference.
+        let leading: CompactSlot = music ? .artwork : (timer != .idle ? .timerIcon : (watch ? .stopwatchIcon : .none))
+        let trailing: CompactSlot = timer != .idle ? .timerTime : (watch ? .stopwatchTime : (music ? .musicBars : .none))
+        return CompactLayout(leading: leading, trailing: trailing)
+    }
+    var combos = 0
+    for toast in [false, true] { for music in [false, true] { for timer in phases { for watch in [false, true] { for pomo in [false, true] {
+        combos += 1
+        let l = CompactLayout.resolve(toast: toast, musicPlaying: music, timer: timer, stopwatchActive: watch, pomodoroLive: pomo)
+        let name = "toast \(toast) music \(music) timer \(timer) watch \(watch) pomodoro \(pomo)"
+        if toast { expect(l == CompactLayout(leading: .toast, trailing: .toast), "\(name): toast wins"); continue }
+        if !pomo { expect(l == legacy(music, timer, watch), "\(name): unchanged without a Pomodoro → \(l)"); continue }
+        if timer == .finished {
+            expect(l.trailing == .timerTime, "\(name): 'Time's up' takes the right side briefly")
+            expect(l.leading == (music ? .artwork : .pomodoroBadge), "\(name): Pomodoro still visible unless music plays → \(l)")
+            continue
+        }
+        let others = music || timer != .idle || watch
+        expect(l.trailing == .pomodoroTime(glyph: others), "\(name): Pomodoro on the right → \(l)")
+        if music {
+            expect(l.leading == .artwork, "\(name): playing music stays on the left")
+        } else {
+            let expected: CompactSlot = timer != .idle ? .timerCompact : (watch ? .stopwatchCompact : .pomodoroBadge)
+            expect(l.leading == expected, "\(name): left side → \(l)")
+        }
+        expect(l.leading != .none && l.trailing != .none, "\(name): both sides used")
+    }}}}}
+    expect(combos == 64, "all 64 combinations checked")
+}
+
+await test("pomodoro: music must really be playing (not paused or stale) to keep the left side") {
+    let music = MusicController(defaults: freshDefaults())
+    let track = MusicController.Track(title: "Sample Song", artist: "Sample Artist", album: "", duration: 200)
+    expect(!music.isActivelyPlaying(), "nothing playing")
+    music.applyForTesting(.init(source: .system, track: track, isPlaying: true, position: 10, sampledAt: Date()))
+    expect(music.isPlaying && music.isActivelyPlaying(), "fresh reading, playing")
+    expect(!music.isActivelyPlaying(at: Date().addingTimeInterval(MusicController.playingStaleAfter + 1)), "readings stopped → stale")
+    music.applyForTesting(.init(source: .system, track: track, isPlaying: false, position: 12, sampledAt: Date()))
+    expect(!music.isActivelyPlaying(), "paused isn't playing")
+    music.applyForTesting(nil)
+    expect(!music.isActivelyPlaying(), "source gone")
+}
+
+await test("pomodoro: island modes, Live Activities tool and coexistence with the timer") {
+    let geometry = NotchGeometry(screenFrame: NSRect(x: 0, y: 0, width: 1512, height: 982), hasNotch: true,
+                                 notchRect: NSRect(x: 662, y: 950, width: 185, height: 32))
+    let d = freshDefaults()
+    let clock = Mono()
+    let pomodoro = PomodoroTimer(defaults: d, now: { clock.t }, autoTick: false)
+    let timer = CountdownTimer(defaults: d)
+    let model = IslandViewModel(geometry: geometry, timer: timer, music: MusicController(defaults: d), stopwatch: Stopwatch(defaults: d),
+                                pomodoro: pomodoro)
+    expect(model.mode == .idle && !model.hasLiveActivity, "idle")
+    pomodoro.start()
+    for _ in 0..<5 { await Task.yield(); try await Task.sleep(for: .milliseconds(20)) }
+    expect(model.mode == .compact && model.isActive, "running Pomodoro is a live activity")
+    expect(model.neckWidth(for: .compact, hovering: false) == 185 + 2 * IslandViewModel.compactSideWidth, "same compact width as other activities")
+    model.setExpanded(true)
+    expect(model.page == .activities && model.activityTool == .pomodoro, "opens on the Pomodoro panel")
+    model.setExpanded(false)
+    timer.start(minutes: 5)
+    expect(pomodoro.runState == .running && timer.phase == .running, "starting the timer doesn't stop the Pomodoro")
+    pomodoro.pause(); pomodoro.resume(); pomodoro.reset()
+    expect(timer.phase == .running, "Pomodoro actions don't touch the timer")
+    pomodoro.start(); timer.pause(); timer.reset()
+    expect(pomodoro.runState == .running, "timer actions don't touch the Pomodoro")
+    expect(IslandViewModel.visibleTools(timerActive: true, stopwatchActive: false, pomodoroActive: true) == [.timer, .pomodoro], "both listed")
+    expect(IslandViewModel.visibleTools(timerActive: true, stopwatchActive: true) == [.timer, .stopwatch], "old call unchanged")
+    expect(IslandViewModel.preferredTool(timer: .running, stopwatchActive: false, pomodoroLive: true, current: .timer) == .pomodoro, "right-side activity first")
+    expect(IslandViewModel.preferredTool(timer: .finished, stopwatchActive: false, pomodoroLive: true, current: .pomodoro) == .timer, "finished timer first")
+    expect(IslandViewModel.preferredTool(timer: .idle, stopwatchActive: true, pomodoroLive: false, current: .timer) == .stopwatch, "stopwatch as before")
+    expect(IslandViewModel.preferredTool(timer: .running, stopwatchActive: true, pomodoroLive: false, current: .stopwatch) == .timer, "timer as before")
+    timer.start(minutes: 5)
+    pomodoro.reset()
+    for _ in 0..<5 { await Task.yield(); try await Task.sleep(for: .milliseconds(20)) }
+    expect(model.mode == .compact && pomodoro.runState == .ready, "timer still running keeps the island compact")
+    timer.reset()
+    for _ in 0..<5 { await Task.yield(); try await Task.sleep(for: .milliseconds(20)) }
+    expect(model.mode == .idle, "nothing live → idle")
+    // Hover/click: the compact Pomodoro uses the same activation zones.
+    pomodoro.start()
+    for _ in 0..<5 { await Task.yield(); try await Task.sleep(for: .milliseconds(20)) }
+    expect(model.activationContains(NSPoint(x: 662 - 30, y: 970)), "left indicator opens the island")
+    expect(model.activationContains(NSPoint(x: 847 + 30, y: 970)), "right indicator opens the island")
+    expect(!model.activationContains(NSPoint(x: 847 + 2 * IslandViewModel.compactSideWidth, y: 970)), "menu bar beyond the indicators stays free")
+    expect(model.keepOpenContains(NSPoint(x: 847 + 30, y: 970)), "no expand/collapse loop over the right indicator")
+    pomodoro.reset()
+}
+
+await test("pomodoro: widget selection — appended for existing users, off, four-widget limit kept") {
+    let legacy = freshDefaults()
+    legacy.set(["clock", "battery", "weather", "stocks", "timer", "stopwatch", "calendar"], forKey: "NotchIsland.widgets.order")
+    legacy.set(["battery", "timer", "stopwatch", "clock"], forKey: "NotchIsland.widgets.enabled")
+    legacy.set(true, forKey: "NotchIsland.widgets.timerMigrated")
+    let s = WidgetSettings(defaults: legacy, secrets: MemorySecretStore())
+    expect(s.order.last == .pomodoro && s.order.dropLast() == [.clock, .battery, .weather, .stocks, .timer, .stopwatch, .calendar], "appended, order kept")
+    expect(s.enabledInOrder == [.clock, .battery, .timer, .stopwatch] && !s.isEnabled(.pomodoro), "selection unchanged, Pomodoro off")
+    expect(!s.setEnabled(.pomodoro, true) && !s.isEnabled(.pomodoro), "fifth widget refused (limit 4)")
+    s.setEnabled(.clock, false)
+    expect(s.setEnabled(.pomodoro, true) && s.enabledInOrder == [.battery, .timer, .stopwatch, .pomodoro], "turned on with room")
+    expect(WidgetSettings(defaults: legacy, secrets: MemorySecretStore()).isEnabled(.pomodoro), "persisted")
+    let fresh = WidgetSettings(defaults: freshDefaults(), secrets: MemorySecretStore())
+    expect(fresh.enabledInOrder == [.battery, .timer, .stopwatch], "new installs: defaults unchanged")
+    expect(WidgetKind.pomodoro.titleKey == .pomodoro && !WidgetKind.pomodoro.usesNetwork && !WidgetKind.pomodoro.needsPermission,
+           "offline, no permission")
+}
+
+await test("pomodoro: three languages, accessible labels, no system notifications") {
+    let lang = LanguageSettings.shared
+    let saved = lang.language; defer { lang.language = saved }
+    let clock = Mono()
+    let (p, _, sub) = makePomodoro(clock: clock)
+    _ = sub
+    var titles: Set<String> = []
+    for language in [AppLanguage.english, .traditionalChinese, .simplifiedChinese] {
+        lang.language = language
+        titles.insert(lang.t(.pomodoro))
+        for key in [L10nKey.pomoFocus, .pomoShortBreak, .pomoLongBreak, .pomoReady, .pomoBreakOver, .pomoStartFocus, .pomoResetSession,
+                    .pomoResetCount, .pomoSkipBreak, .pomoRules, .pomoMenuStart, .pomoMenuReset] {
+            expect(!lang.t(key).isEmpty && !lang.t(key).contains("?"), "\(language) \(key)")
+        }
+        p.reset(); p.reset()
+        expect(PomodoroText.status(p, lang) == lang.t(.pomoReady), "\(language): ready status")
+        p.start(); clock.t += 61; p.refresh()
+        let summary = PomodoroText.summary(p, lang)
+        expect(summary.contains(lang.t(.pomodoro)) && summary.contains(lang.t(.pomoFocus)) && summary.contains("23"), "\(language): spoken summary \(summary)")
+        expect(PomodoroText.primaryLabel(p, lang) == lang.t(.pause), "\(language): primary label follows the state")
+        p.pause()
+        expect(PomodoroText.status(p, lang).contains(lang.t(.paused)), "\(language): paused status")
+        expect(PomodoroText.primaryLabel(p, lang) == lang.t(.resume), "\(language): resume")
+        let rules = lang.t(.pomoRules)
+        expect(["25", "5", "15", "30", "4"].allSatisfy(rules.contains), "\(language): rules state the numbers")
+        let toast = PomodoroAnnouncement.toast(for: .focusCompleted(total: 4, next: .longBreak, late: false), lang: lang, longBreakMinutes: 20)
+        expect(toast?.text == lang.t(.pomoLongBreak) && toast?.accessibilityText?.contains("20") == true, "\(language): long-break message")
+        expect(PomodoroAnnouncement.toast(for: .breakEnded(.shortBreak, late: false), lang: lang, longBreakMinutes: 20)?.text == lang.t(.pomoBreakOver),
+               "\(language): break-over message")
+    }
+    expect(titles == ["Pomodoro", "番茄鐘", "番茄钟"], "names: \(titles)")
+    // One simple icon everywhere: the built-in SF Symbol "timer" in light tomato red.
+    expect(PomodoroStyle.symbol == "timer" && NSImage(systemSymbolName: PomodoroStyle.symbol, accessibilityDescription: nil) != nil,
+           "Pomodoro icon is the built-in timer SF Symbol")
+    expect(WidgetKind.pomodoro.symbol == PomodoroStyle.symbol && ActivityTool.pomodoro.symbol == PomodoroStyle.symbol,
+           "same icon in Settings, widget list and the Live Activities switcher")
+    let viewSources = try ["PomodoroViews.swift", "WidgetViews.swift", "SettingsWindow.swift", "IslandViews.swift"]
+        .map { try String(contentsOfFile: "Sources/NotchIsland/\($0)", encoding: .utf8) }.joined()
+    expect(!viewSources.contains("TomatoGlyph") && !viewSources.contains("cup.and.saucer"), "no custom tomato drawing or second break icon")
+    let tomato = NSColor(PomodoroStyle.tomato).usingColorSpace(.sRGB)!
+    let luminance = { (c: CGFloat) -> CGFloat in c <= 0.03928 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4) }
+    let l = 0.2126 * luminance(tomato.redComponent) + 0.7152 * luminance(tomato.greenComponent) + 0.0722 * luminance(tomato.blueComponent)
+    expect((l + 0.05) / 0.05 >= 7 && tomato.redComponent > 0.95, "light, clear tomato red on black (contrast \((l + 0.05) / 0.05))")
+    let sources = try ["Pomodoro.swift", "PomodoroViews.swift"].map { try String(contentsOfFile: "Sources/NotchIsland/\($0)", encoding: .utf8) }.joined()
+    expect(!sources.contains("IslandNotifier") && !sources.contains("UNUserNotification") && !sources.contains("NSUserNotification"),
+           "no system notifications from the Pomodoro")
+    let controller = try String(contentsOfFile: "Sources/NotchIsland/IslandController.swift", encoding: .utf8)
+    expect(controller.contains("pomodoro.events") && controller.contains("self?.pomodoro.refresh()"), "sound/message per event; catch-up on wake")
+}
+
+await test("pomodoro: compact pieces fit beside the notch in every language") {
+    let lang = LanguageSettings.shared
+    let saved = lang.language; defer { lang.language = saved }
+    let clock = Mono()
+    let (p, _, sub) = makePomodoro(clock: clock)
+    _ = sub
+    let room = IslandViewModel.compactSideWidth - 10 // side padding
+    @MainActor func width<V: View>(_ view: V) -> CGFloat {
+        let renderer = ImageRenderer(content: view.fixedSize().environment(\.colorScheme, .dark))
+        return renderer.nsImage?.size.width ?? .infinity
+    }
+    for language in [AppLanguage.english, .traditionalChinese, .simplifiedChinese] {
+        lang.language = language
+        p.reset(); p.reset(); p.start()
+        clock.t += 1; p.refresh() // 24:59
+        for glyph in [false, true] {
+            let w = width(PomodoroCompactTime(pomodoro: p, lang: lang, glyph: glyph))
+            expect(w <= room, "\(language) time glyph \(glyph): \(w) ≤ \(room)")
+        }
+        let badge = width(PomodoroCompactBadge(pomodoro: p, lang: lang))
+        expect(badge <= room, "\(language) badge \(badge)")
+        p.reset() // ready + count → "Done" text only shows with the break-over notice; check it too
+        let done = width(Text(lang.t(.done)).font(.system(size: 12.5, weight: .semibold, design: .rounded)))
+        expect(done + 12 <= room, "\(language) 'Done' \(done)")
+        let toastText = width(ToastTrailing(toast: IslandToast(symbol: "checkmark.circle.fill", text: lang.t(.pomoLongBreak), style: .success)))
+        expect(toastText <= room / 0.6, "\(language) toast fits with the existing 0.6 minimum scale: \(toastText)")
+    }
+}
+
+await test("menu-bar icon: logo as a template image, crisp and consistent") {
+    let image = StatusBarIcon.image()
+    expect(image.isTemplate, "template: macOS tints it for light/dark menu bars")
+    expect(image.size == NSSize(width: 18, height: 18), "18 × 18 pt")
+    for scale in [1, 2] {
+        let px = 18 * scale
+        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: px, pixelsHigh: px, bitsPerSample: 8, samplesPerPixel: 4,
+                                         hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else {
+            expect(false, "bitmap"); continue
+        }
+        rep.size = NSSize(width: 18, height: 18)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        image.draw(in: NSRect(x: 0, y: 0, width: 18, height: 18))
+        NSGraphicsContext.restoreGraphicsState()
+        func alpha(_ x: CGFloat, _ yFromTop: CGFloat) -> CGFloat {
+            rep.colorAt(x: Int(x * CGFloat(scale)), y: Int(yFromTop * CGFloat(scale)))?.alphaComponent ?? -1
+        }
+        expect(alpha(9, 15) > 0.9, "@\(scale)x tile is solid below the bezel")
+        expect(alpha(2, 9) > 0.9 && alpha(15.6, 9) > 0.9, "@\(scale)x tile edges solid")
+        // Tile 14 pt from 2 pt; top edge ≈6.2–7.5 pt and notch down to ≈8.9 pt from the top.
+        expect(alpha(9, 8.0) < 0.35, "@\(scale)x notch cut out")
+        expect(alpha(4.6, 6.8) < 0.35 && alpha(13.4, 6.8) < 0.35, "@\(scale)x bezel top edge cut out")
+        expect(alpha(6.5, 8.6) > 0.6 && alpha(11.5, 8.6) > 0.6, "@\(scale)x tile visible beside the notch")
+        expect(alpha(0.3, 0.3) < 0.05, "@\(scale)x rounded corner transparent")
+    }
+    let delegate = try String(contentsOfFile: "Sources/NotchIsland/AppDelegate.swift", encoding: .utf8)
+    expect(delegate.contains("StatusBarIcon.image()") && !delegate.contains("capsule.fill"), "status item uses the logo")
+}
+
+await test("DMG artwork: warning text in all three languages stays clear of the title bar") {
+    let art = try String(contentsOfFile: "scripts/render_artwork.swift", encoding: .utf8)
+    let settings = try String(contentsOfFile: "scripts/dmg_settings.py", encoding: .utf8)
+    expect(art.contains("let installerHeight: CGFloat = 380") && settings.contains("window_rect = ((120, 110), (620, 380))"),
+           "background and window are both 620 × 380")
+    expect(art.contains("let maxTitleBar: CGFloat = 56") && art.contains("checkWarningFits()"), "render fails if text could be hidden")
+    for line in ["If macOS blocks Notch Island, please read the README.", "若 Notch Island 被 macOS 阻擋，請閱讀 README。", "若 Notch Island 被 macOS 阻止，请阅读 README。"] {
+        expect(art.contains(line), "line: \(line)")
+        let size = (line as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 12)])
+        expect(size.width < 620 - 32, "fits the width: \(size.width)")
+    }
+    // Same arithmetic as the renderer: last line bottom must stay above the title-bar band.
+    let lastBottom: CGFloat = 262 + 2 * 18 + ("README" as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 12)]).height
+    expect(lastBottom <= 380 - 56 && 262 >= 165 + 56 + 22, "between the icon labels and the bottom band: \(lastBottom)")
 }
 
 // MARK: - Live network (opt-in)

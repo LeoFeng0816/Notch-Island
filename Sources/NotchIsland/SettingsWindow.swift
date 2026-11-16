@@ -54,6 +54,7 @@ struct SettingsView: View {
     @ObservedObject var audDRecognition: AudDRecognition
     @ObservedObject var songFinder: SongFinderRecognition
     @ObservedObject var updater: SoftwareUpdateController
+    @ObservedObject var pomodoro: PomodoroTimer
     /// Shared with the island (controller); asks Location Services once.
     var useCurrentLocation: () -> Void
     let device: DeviceInfo
@@ -69,6 +70,7 @@ struct SettingsView: View {
             generalSection
             SoftwareUpdateSection(lang: lang, updater: updater)
             widgetsSection
+            PomodoroSettingsSection(lang: lang, pomodoro: pomodoro)
             weatherSection
             stocksSection
             calendarSection
@@ -545,7 +547,9 @@ struct WidgetOrderRow: View {
         let index = settings.order.firstIndex(of: kind) ?? 0
         HStack(spacing: 8) {
             Image(systemName: "line.3.horizontal").foregroundStyle(.tertiary)
-            Image(systemName: kind.symbol).frame(width: 20)
+            Image(systemName: kind.symbol)
+                .foregroundStyle(kind == .pomodoro ? PomodoroStyle.tomato : .primary)
+                .frame(width: 20)
             Toggle(isOn: Binding(get: { settings.isEnabled(kind) },
                                  set: { on in
                                      if settings.setEnabled(kind, on) {

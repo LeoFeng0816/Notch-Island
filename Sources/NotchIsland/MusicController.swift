@@ -256,6 +256,17 @@ final class MusicController: ObservableObject {
     /// What the play button shows: the request while pending, else the player's state.
     var displayedIsPlaying: Bool { tracker.displayedPlaying(observed: isPlaying) }
 
+    /// A source reading older than this no longer counts as "playing now".
+    nonisolated static let playingStaleAfter: TimeInterval = 20
+
+    /// Really playing right now: the player reported playing (not paused), there is
+    /// a track, and the reading is recent. A source whose readings stopped arriving
+    /// (e.g. a stuck browser scan) is stale and doesn't count. Used to decide whether
+    /// music or the Pomodoro gets the left side of the compact island.
+    func isActivelyPlaying(at date: Date = Date()) -> Bool {
+        isPlaying && track != nil && date.timeIntervalSince(lastSampledAt) <= Self.playingStaleAfter
+    }
+
     func start() {
         let distributed = DistributedNotificationCenter.default()
         for name in ["com.apple.Music.playerInfo", "com.spotify.client.PlaybackStateChanged"] {

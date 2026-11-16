@@ -18,8 +18,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Small menu-bar entry for language and quitting (the app has no Dock icon).
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem.button {
-            button.image = NSImage(systemSymbolName: "capsule.fill", accessibilityDescription: "Notch Island")
-            button.image?.isTemplate = true
+            // The app logo (notch bezel on a rounded tile) as a template image, so
+            // macOS tints it for light/dark menu bars and the selected state.
+            button.image = StatusBarIcon.image()
+            button.imageScaling = .scaleNone
+            button.setAccessibilityLabel("Notch Island")
         }
         let menu = NSMenu()
         menu.delegate = self
@@ -29,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // (also --demo-stopwatch, --widgets, --settings, --stay-expanded)
         let args = ProcessInfo.processInfo.arguments
         if args.contains("--demo-timer") { controller.timer.start(minutes: 5) }
+        if args.contains("--demo-pomodoro") { controller.pomodoro.start() }
         if args.contains("--demo-stopwatch") && !controller.stopwatch.isActive { controller.stopwatch.start() }
         if args.contains("--widgets") {
             // Preview: open the widget page even when activities are running.
@@ -74,6 +78,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } else {
             menu.addItem(item(lang.t(.quickTimer), #selector(quickTimer)))
         }
+        if controller.pomodoro.isSessionActive {
+            menu.addItem(item(lang.t(.pomoMenuReset), #selector(resetPomodoroSession)))
+        } else {
+            menu.addItem(item(lang.t(.pomoMenuStart), #selector(startPomodoro)))
+        }
         if controller.stopwatch.isActive {
             menu.addItem(item(lang.t(.stopStopwatch), #selector(resetStopwatch)))
         } else {
@@ -100,6 +109,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func toggleIsland() { controller.setExpanded(!controller.isExpanded) }
     @objc private func quickTimer() { controller.timer.start(minutes: 5) }
     @objc private func stopTimer() { controller.timer.reset() }
+    @objc private func startPomodoro() { controller.pomodoro.start() }
+    @objc private func resetPomodoroSession() {
+        // Only ever stops the running/paused session here (never clears the count).
+        if controller.pomodoro.isSessionActive { controller.pomodoro.reset() }
+    }
     @objc private func startStopwatch() { controller.stopwatch.start() }
     @objc private func resetStopwatch() { controller.stopwatch.reset() }
     @objc private func openSettings() { controller.openSettings() }

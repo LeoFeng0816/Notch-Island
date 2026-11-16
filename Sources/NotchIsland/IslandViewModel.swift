@@ -35,8 +35,24 @@ enum ExpandedPage: String, CaseIterable, Identifiable {
 }
 
 enum ActivityTool: String, CaseIterable, Identifiable {
-    case timer, stopwatch
+    case timer, stopwatch, pomodoro
     var id: String { rawValue }
+
+    var symbol: String {
+        switch self {
+        case .timer: return "timer"
+        case .stopwatch: return "stopwatch"
+        case .pomodoro: return PomodoroStyle.symbol
+        }
+    }
+
+    var titleKey: L10nKey {
+        switch self {
+        case .timer: return .timer
+        case .stopwatch: return .stopwatch
+        case .pomodoro: return .pomodoro
+        }
+    }
 }
 
 @MainActor
@@ -70,6 +86,8 @@ final class IslandViewModel: ObservableObject {
     let timer: CountdownTimer
     let music: MusicController
     let stopwatch: Stopwatch
+    /// Independent of the countdown timer (see `PomodoroTimer`).
+    let pomodoro: PomodoroTimer
     /// Opens the settings window (set by the controller).
     var onOpenSettings: (() -> Void)?
     /// Asks for (coarse) current location for weather; user-initiated only.
@@ -100,13 +118,17 @@ final class IslandViewModel: ObservableObject {
     /// Extra transparent room in the window so the expanded shadow is not clipped.
     static let windowPadding: CGFloat = 40
 
-    init(geometry: NotchGeometry, timer: CountdownTimer, music: MusicController, stopwatch: Stopwatch) {
+    init(geometry: NotchGeometry, timer: CountdownTimer, music: MusicController, stopwatch: Stopwatch,
+         pomodoro: PomodoroTimer? = nil) {
         self.geometry = geometry
         self.timer = timer
         self.music = music
         self.stopwatch = stopwatch
-        Publishers.CombineLatest3(timer.$phase, music.$isPlaying, stopwatch.$phase)
-            .map { phase, playing, watch in phase != .idle || playing || watch != .idle }
+        // Tests that don't care get a private, non-ticking Pomodoro with throwaway defaults.
+        self.pomodoro = pomodoro ?? PomodoroTimer(defaults: UserDefaults(suiteName: "NotchIsland.unusedPomodoro") ?? .standard,
+                                                  autoTick: false)
+        Publishers.CombineLatest4(timer.$phase, music.$isPlaying, stopwatch.$phase, self.pomodoro.livePublisher)
+            .map { phase, playing, watch, pomodoroLive in phase != .idle || playing || watch != .idle || pomodoroLive }
             .removeDuplicates()
             .sink { [weak self] _ in
                 // Defer so the publishers' new values are visible.
@@ -124,8 +146,8 @@ final class IslandViewModel: ObservableObject {
             banner = nil
             // Live activities first when there are any; otherwise the widget area.
             page = hasLiveActivity ? .activities : .widgets
-            if stopwatch.isActive && !timer.isActive { activityTool = .stopwatch }
-            if timer.isActive { activityTool = .timer }
+            activityTool = Self.preferredTool(timer: timer.phase, stopwatchActive: stopwatch.isActive,
+                                              pomodoroLive: pomodoro.isLive, current: activityTool)
         }
         isExpanded = expanded
         updateMode()
@@ -155,15 +177,25 @@ final class IslandViewModel: ObservableObject {
 
     /// Tools shown on the Live Activities page: only running/paused/finished ones.
     /// An idle timer lives in the Timer widget instead.
-    nonisolated static func visibleTools(timerActive: Bool, stopwatchActive: Bool) -> [ActivityTool] {
-        (timerActive ? [ActivityTool.timer] : []) + (stopwatchActive ? [.stopwatch] : [])
+    nonisolated static func visibleTools(timerActive: Bool, stopwatchActive: Bool, pomodoroActive: Bool = false) -> [ActivityTool] {
+        (timerActive ? [ActivityTool.timer] : []) + (stopwatchActive ? [.stopwatch] : []) + (pomodoroActive ? [.pomodoro] : [])
+    }
+
+    /// Tool selected when the island opens: the one shown on the right of the compact
+    /// island (see `CompactLayout`), so expanding continues what the user was looking at.
+    nonisolated static func preferredTool(timer: CountdownTimer.Phase, stopwatchActive: Bool, pomodoroLive: Bool,
+                                          current: ActivityTool) -> ActivityTool {
+        if pomodoroLive && timer != .finished { return .pomodoro }
+        if timer != .idle { return .timer }
+        if stopwatchActive { return .stopwatch }
+        return current
     }
 
     nonisolated static func resolvedTool(_ selected: ActivityTool, in tools: [ActivityTool]) -> ActivityTool? {
         tools.contains(selected) ? selected : tools.first
     }
 
-    var hasLiveActivity: Bool { timer.isActive || music.isPlaying || stopwatch.isActive }
+    var hasLiveActivity: Bool { timer.isActive || music.isPlaying || stopwatch.isActive || pomodoro.isLive }
 
     /// Shows a short message in the notch (counts as a live indicator while visible).
     func showToast(_ toast: IslandToast, duration: TimeInterval = 2.8) {

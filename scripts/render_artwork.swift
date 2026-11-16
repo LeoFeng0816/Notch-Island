@@ -68,26 +68,66 @@ func label(_ string: String, at origin: CGPoint, size: CGFloat, weight: NSFont.W
 /// Finder icon centre row, measured from the window's top (must match
 /// `icon_locations` in scripts/dmg_settings.py and the check in make_dmg.sh).
 let installerIconRow: CGFloat = 165
-let installerHeight: CGFloat = 360
+let installerWidth: CGFloat = 620
+/// Must match `window_rect` in scripts/dmg_settings.py. Finder's window bounds
+/// include the title bar and the background is pinned to the top of the content
+/// area, so the bottom `maxTitleBar` points of this image can be hidden.
+let installerHeight: CGFloat = 380
+/// Generous allowance for Finder's title bar (≈28 pt on macOS 14–15, taller on
+/// newer releases). Nothing important may be drawn in this band at the bottom.
+let maxTitleBar: CGFloat = 56
 
-func centred(_ string: String, y: CGFloat, size: CGFloat, ink: UInt32) {
-    let attributes: [NSAttributedString.Key: Any] = [
-        .font: NSFont.systemFont(ofSize: size, weight: .regular),
-        .foregroundColor: NSColor(cgColor: color(ink))!,
-    ]
-    let width = (string as NSString).size(withAttributes: attributes).width
-    (string as NSString).draw(at: CGPoint(x: (620 - width) / 2, y: y), withAttributes: attributes)
+/// "If macOS blocks…" in English, Traditional and Simplified Chinese, placed
+/// under the icon labels (0.1.2 drew them 26–46 pt from the bottom, where the
+/// title bar hid the second line).
+let warningLines = [
+    "If macOS blocks Notch Island, please read the README.",
+    "若 Notch Island 被 macOS 阻擋，請閱讀 README。",
+    "若 Notch Island 被 macOS 阻止，请阅读 README。",
+]
+/// Top of the first warning line, from the window's top (icon labels end ≈245).
+let warningTop: CGFloat = 262
+let warningSize: CGFloat = 12
+let warningLineHeight: CGFloat = 18
+
+func warningAttributes() -> [NSAttributedString.Key: Any] {
+    [.font: NSFont.systemFont(ofSize: warningSize, weight: .regular),
+     .foregroundColor: NSColor(cgColor: color(0x4A5D7C))!]
+}
+
+/// Bounds (y from the top) of every warning line; used for drawing and the fit check.
+func warningFrames() -> [CGRect] {
+    warningLines.enumerated().map { index, line in
+        let size = (line as NSString).size(withAttributes: warningAttributes())
+        return CGRect(x: (installerWidth - size.width) / 2, y: warningTop + CGFloat(index) * warningLineHeight,
+                      width: size.width, height: size.height)
+    }
+}
+
+/// Fails the build if any warning line could be cut off by the window edges or
+/// the title bar, or would collide with the icon labels.
+func checkWarningFits() {
+    for frame in warningFrames() {
+        guard frame.minX >= 16, frame.maxX <= installerWidth - 16,
+              frame.minY >= installerIconRow + 56 + 22,
+              frame.maxY <= installerHeight - maxTitleBar else {
+            fatalError("DMG warning text doesn't fit: \(frame)")
+        }
+    }
 }
 
 /// 0.1.1: no dark header, title or instructions — just the app, the arrow to
 /// Applications, and where to look if macOS blocks the app.
 func drawInstaller(_ context: CGContext, version: String?) {
-    let background = CGPath(rect: CGRect(x: 0, y: 0, width: 620, height: installerHeight), transform: nil)
+    let background = CGPath(rect: CGRect(x: 0, y: 0, width: installerWidth, height: installerHeight), transform: nil)
     gradient(context, background, [color(0xF6F9FE), color(0xDEE9F9)],
              from: CGPoint(x: 40, y: installerHeight), to: CGPoint(x: 590, y: 0))
 
-    centred("If macOS blocks Notch Island, please read the README.", y: 46, size: 12, ink: 0x4A5D7C)
-    centred("若 Notch Island 被 macOS 阻擋，請閱讀 README。", y: 26, size: 12, ink: 0x4A5D7C)
+    checkWarningFits()
+    for (line, frame) in zip(warningLines, warningFrames()) {
+        // Drawing space is y-up: convert from the top.
+        (line as NSString).draw(at: CGPoint(x: frame.minX, y: installerHeight - frame.maxY), withAttributes: warningAttributes())
+    }
 
     let y = installerHeight - installerIconRow
     let arrow = CGMutablePath()
@@ -141,7 +181,7 @@ case "installer":
     for scale in [1, 2] {
         let suffix = scale == 2 ? "@2x" : ""
         let filename = "installer\(suffix).png"
-        try render(width: 620, height: 360, scale: scale, to: output.appendingPathComponent(filename)) { context in
+        try render(width: Int(installerWidth), height: Int(installerHeight), scale: scale, to: output.appendingPathComponent(filename)) { context in
             drawInstaller(context, version: installerVersion)
         }
     }

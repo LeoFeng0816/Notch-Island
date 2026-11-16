@@ -7,12 +7,13 @@ Turn your MacBook notch into a quick place for music, timers, and widgets. Notch
 <p align="center"><img src="docs/images/compact-v0.1.1.jpg" width="440" alt="Collapsed island"></p>
 <p align="center"><img src="docs/images/now-playing-en-v0.1.1.jpg" width="560" alt="Now playing"></p>
 <p align="center"><img src="docs/images/widgets-en-v0.1.1.jpg" width="560" alt="Widgets"></p>
+<p align="center"><img src="docs/images/pomodoro-en-v0.1.3-render.png" width="560" alt="Pomodoro widget (offline render)"><br><sub>Pomodoro: offline render with sample data, not a screenshot of a real device.</sub></p>
 
 ## Features
 
 - **Notch interaction:** click to expand immediately or hover for one second. When idle, the menu bar beside the notch stays clear.
-- **Music and activities:** see artwork, track details, and playback progress for supported sources; control playback and seeking. Countdowns and stopwatches appear while active.
-- **Widgets:** choose and arrange up to four widgets, including battery, weather, stocks, clock, calendar, timer, and stopwatch. Switch between activities and widgets when something is active.
+- **Music and activities:** see artwork, track details, and playback progress for supported sources; control playback and seeking. Countdowns, stopwatches and the Pomodoro appear while active; with music playing, music stays on the left and the Pomodoro on the right.
+- **Widgets:** choose and arrange up to four widgets, including battery, weather, stocks, clock, calendar, timer, stopwatch, and Pomodoro. Switch between activities and widgets when something is active.
 - **Quick actions:** clipboard history, screenshot to clipboard, screen recording, and music recognition (Song Finder by default).
 - **Software update:** check GitHub for the latest release on demand, verify the download's SHA-256, and follow a guided install.
 - **Power alerts:** see charging status when power is connected and a low-battery reminder with a shortcut to macOS Battery settings.
@@ -33,6 +34,7 @@ The app is ad-hoc signed and **not notarized by Apple**. Only if you trust the d
 
 - **Music:** play media from a supported source and expand the island to view and control it. Configure Apple Music, Spotify, and optional YouTube / YouTube Music integration in settings. Browser integration may need Automation permission and browser configuration.
 - **Widgets:** select, reorder, or disable widgets in settings; up to four can be shown at once. Weather can use your current location, and stocks can be searched by company or ticker.
+- **Pomodoro:** turn it on in **Settings › Widgets**. Focus 25 minutes, short break 5 minutes; after every 4 completed focus sessions the break is a long one (15–30 minutes, default 20, adjustable in Settings or on the Live Activities page). Only a focus that runs its full time counts; pausing, resetting and skipping a break never do. A break starts by itself after a completed focus; the next focus waits for you. Time keeps running while the Mac sleeps and isn't affected by changing the clock. It runs independently of the countdown timer, posts no system notifications, and marks each change with a sound and a short message in the notch.
 - **Clipboard:** choose whether to keep history and for how long. Select an item to copy it; automatic paste can be attempted after granting permission to send keystrokes.
 - **Screenshots and recording:** screenshots are copied to the clipboard. Recording opens the native macOS recording toolbar, where you start the recording.
 - **Music recognition:** uses [Song Finder](https://songfinder.dev) by default, with no account or API key. The first press explains where the audio goes and asks for your consent. A match shows the title and artist, with **Google Search** (artist and title prefilled) and **Copy** (“Artist - Title”). “No match” is shown only when Song Finder says nothing matched; permissions, connectivity, timeouts, rate limits and server errors are reported separately. In settings you can switch to macOS Recognize Music (results stay in Control Center) or AudD (your own API token).

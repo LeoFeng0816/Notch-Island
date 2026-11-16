@@ -5,7 +5,9 @@ import LocalAuthentication
 import CoreLocation
 
 enum WidgetKind: String, CaseIterable, Identifiable, Codable {
-    case battery, weather, stocks, timer, stopwatch, calendar, clock
+    // New kinds go last: existing users' order and selection are kept (a new kind is
+    // appended to the order and stays off until turned on in Settings).
+    case battery, weather, stocks, timer, stopwatch, calendar, clock, pomodoro
 
     var id: String { rawValue }
 
@@ -18,6 +20,7 @@ enum WidgetKind: String, CaseIterable, Identifiable, Codable {
         case .timer: return "timer"
         case .calendar: return "calendar"
         case .clock: return "clock.fill"
+        case .pomodoro: return PomodoroStyle.symbol // SF Symbol "timer", tinted tomato red in Settings
         }
     }
 
@@ -30,6 +33,7 @@ enum WidgetKind: String, CaseIterable, Identifiable, Codable {
         case .timer: return .timer
         case .calendar: return .calendarWidget
         case .clock: return .clockWidget
+        case .pomodoro: return .pomodoro
         }
     }
 

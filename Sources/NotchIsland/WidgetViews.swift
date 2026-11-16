@@ -120,8 +120,14 @@ struct ToolSwitcher: View {
                     withAnimation(.snappy(duration: 0.2)) { tool = option }
                 } label: {
                     HStack(spacing: 3) {
-                        Image(systemName: option == .timer ? "timer" : "stopwatch")
-                        Text(lang.t(option == .timer ? .timer : .stopwatch))
+                        // Same dimming as the label; the Pomodoro's icon keeps its tomato red.
+                        Image(systemName: option.symbol)
+                            .foregroundStyle((option == .pomodoro ? PomodoroStyle.tomato : Color.white)
+                                .opacity(selected || options.count == 1 ? 0.95 : 0.5))
+                        // With three tools only the selected one is spelled out (room for the status).
+                        if options.count < 3 || selected {
+                            Text(lang.t(option.titleKey)).lineLimit(1)
+                        }
                     }
                     .padding(.horizontal, 6)
                     .frame(height: 17)
@@ -130,6 +136,9 @@ struct ToolSwitcher: View {
                 }
                 .buttonStyle(PressableStyle())
                 .disabled(options.count == 1)
+                .help(lang.t(option.titleKey))
+                .accessibilityLabel(lang.t(option.titleKey))
+                .accessibilityAddTraits(selected ? .isSelected : [])
             }
         }
     }

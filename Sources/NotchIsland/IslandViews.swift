@@ -128,7 +128,7 @@ struct IslandRootView: View {
                 // Menu-bar row: only the notch and, while active, its side indicators.
                 ZStack {
                     if model.isActive {
-                        CompactContent(model: model, timer: timer, music: music, lang: lang)
+                        CompactContent(model: model, timer: timer, music: music, lang: lang, pomodoro: model.pomodoro)
                             .frame(width: model.compactWidth)
                             .transition(.opacity.animation(.easeOut(duration: 0.18)))
                     }
@@ -177,6 +177,7 @@ struct IslandRootView: View {
         .environmentObject(model)
         .environmentObject(timer)
         .environmentObject(stopwatch)
+        .environmentObject(model.pomodoro)
         .environmentObject(battery)
         .environmentObject(data)
         .environmentObject(settings)
@@ -197,17 +198,23 @@ struct CompactContent: View {
     @ObservedObject var timer: CountdownTimer
     @ObservedObject var music: MusicController
     @ObservedObject var lang: LanguageSettings
+    @ObservedObject var pomodoro: PomodoroTimer
 
     var body: some View {
         let notch = model.geometry.notchSize
-        HStack(spacing: 0) {
-            leading
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.leading, 10)
-            Color.clear.frame(width: notch.width)
-            trailing
-                .frame(maxWidth: .infinity, alignment: .trailing)
-                .padding(.trailing, 10)
+        // Re-evaluated every 2 s so a music source that stopped reporting ("stale")
+        // hands the left side back to the Pomodoro.
+        TimelineView(.periodic(from: .now, by: 2)) { context in
+            let layout = layout(at: context.date)
+            HStack(spacing: 0) {
+                slot(layout.leading, leading: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.leading, 10)
+                Color.clear.frame(width: notch.width)
+                slot(layout.trailing, leading: false)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .padding(.trailing, 10)
+            }
         }
         .frame(height: notch.height)
         .contentShape(Rectangle())
@@ -217,27 +224,32 @@ struct CompactContent: View {
     @EnvironmentObject var stopwatch: Stopwatch
     @EnvironmentObject var audioMonitor: AudioLevelMonitor
 
-    @ViewBuilder private var leading: some View {
-        if let toast = model.toast {
-            ToastLeading(toast: toast)
-        } else if music.isPlaying {
+    /// See `CompactLayout`. Without a Pomodoro this is the 0.1.2 layout, unchanged.
+    private func layout(at date: Date) -> CompactLayout {
+        let live = pomodoro.isLive
+        return CompactLayout.resolve(toast: model.toast != nil,
+                                     musicPlaying: live ? music.isActivelyPlaying(at: date) : music.isPlaying,
+                                     timer: timer.phase, stopwatchActive: stopwatch.isActive, pomodoroLive: live)
+    }
+
+    @ViewBuilder private func slot(_ slot: CompactSlot, leading: Bool) -> some View {
+        switch slot {
+        case .none:
+            EmptyView()
+        case .toast:
+            if let toast = model.toast {
+                if leading { ToastLeading(toast: toast) } else { ToastTrailing(toast: toast) }
+            }
+        case .artwork:
             ArtworkView(image: music.artwork, size: max(16, model.geometry.notchSize.height - 12), corner: 5)
-        } else if timer.isActive {
+        case .musicBars:
+            MusicBars(isPlaying: music.isPlaying, palette: music.palette, realLevels: audioMonitor.levels)
+        case .timerIcon:
             Image(systemName: timer.phase == .finished ? "bell.fill" : "timer")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.orange)
                 .symbolEffect(.pulse, options: .repeating, isActive: timer.phase == .finished)
-        } else if stopwatch.isActive {
-            Image(systemName: "stopwatch")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.cyan)
-        }
-    }
-
-    @ViewBuilder private var trailing: some View {
-        if let toast = model.toast {
-            ToastTrailing(toast: toast)
-        } else if timer.isActive {
+        case .timerTime:
             Text(timer.phase == .finished ? lang.t(.done) : CountdownTimer.format(timer.remaining))
                 .font(.system(size: 12.5, weight: .semibold, design: .rounded))
                 .monospacedDigit()
@@ -246,7 +258,24 @@ struct CompactContent: View {
                 .animation(.snappy(duration: 0.25), value: Int(timer.remaining.rounded(.up)))
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
-        } else if stopwatch.isActive {
+        case .timerCompact:
+            // Timer beside a Pomodoro: small icon + time on the left.
+            HStack(spacing: 3) {
+                Image(systemName: "timer").font(.system(size: 10, weight: .semibold))
+                Text(CountdownTimer.format(timer.remaining))
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+            }
+            .foregroundStyle(timer.phase == .paused ? Color.orange.opacity(0.55) : .orange)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(lang.t(.timer) + ", " + PomodoroText.spoken(timer.remaining, lang))
+        case .stopwatchIcon:
+            Image(systemName: "stopwatch")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.cyan)
+        case .stopwatchTime:
             TimelineView(.periodic(from: .now, by: 0.5)) { context in
                 Text(Stopwatch.format(stopwatch.elapsed(at: context.date), fraction: false))
                     .font(.system(size: 12.5, weight: .semibold, design: .rounded))
@@ -255,8 +284,22 @@ struct CompactContent: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
             }
-        } else if music.isPlaying {
-            MusicBars(isPlaying: music.isPlaying, palette: music.palette, realLevels: audioMonitor.levels)
+        case .stopwatchCompact:
+            TimelineView(.periodic(from: .now, by: 0.5)) { context in
+                HStack(spacing: 3) {
+                    Image(systemName: "stopwatch").font(.system(size: 10, weight: .semibold))
+                    Text(Stopwatch.format(stopwatch.elapsed(at: context.date), fraction: false))
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                }
+                .foregroundStyle(stopwatch.phase == .paused ? Color.cyan.opacity(0.55) : .cyan)
+            }
+        case .pomodoroBadge:
+            PomodoroCompactBadge(pomodoro: pomodoro, lang: lang)
+        case .pomodoroTime(let glyph):
+            PomodoroCompactTime(pomodoro: pomodoro, lang: lang, glyph: glyph)
         }
     }
 }
@@ -269,6 +312,7 @@ struct ExpandedContent: View {
     @ObservedObject var music: MusicController
     @ObservedObject var lang: LanguageSettings
     @EnvironmentObject var stopwatch: Stopwatch
+    @EnvironmentObject var pomodoro: PomodoroTimer
     @EnvironmentObject private var audd: AudDRecognition
     @EnvironmentObject private var songFinder: SongFinderRecognition
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -304,7 +348,8 @@ struct ExpandedContent: View {
                 case .activities:
                     // Only tools that are actually running appear here; an idle
                     // timer/stopwatch lives in its widget.
-                    let tools = IslandViewModel.visibleTools(timerActive: timer.isActive, stopwatchActive: stopwatch.isActive)
+                    let tools = IslandViewModel.visibleTools(timerActive: timer.isActive, stopwatchActive: stopwatch.isActive,
+                                                             pomodoroActive: pomodoro.isLive)
                     HStack(alignment: .top, spacing: 16) {
                         MusicPanel(music: music, lang: lang)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -317,6 +362,7 @@ struct ExpandedContent: View {
                                 switch tool {
                                 case .timer: TimerPanel(timer: timer, lang: lang, tool: $model.activityTool, options: tools)
                                 case .stopwatch: StopwatchPanel(stopwatch: stopwatch, lang: lang, tool: $model.activityTool, options: tools)
+                                case .pomodoro: PomodoroPanel(pomodoro: pomodoro, lang: lang, tool: $model.activityTool, options: tools)
                                 }
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
