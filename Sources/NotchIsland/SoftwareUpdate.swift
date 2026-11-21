@@ -2,12 +2,15 @@ import AppKit
 import CryptoKit
 import CoreServices
 import SwiftUI
+#if canImport(Sparkle)
+import Sparkle
+#endif
 
 // MARK: - Versions
 
 /// Strict `X.Y.Z` (optionally `vX.Y.Z`). Anything else — pre-release suffixes, build
 /// metadata, four parts — is not a version this updater will offer.
-struct AppVersion: Comparable, Hashable, CustomStringConvertible {
+struct AppVersion: Comparable, Hashable, CustomStringConvertible, Sendable {
     let major: Int, minor: Int, patch: Int
 
     init(_ major: Int, _ minor: Int, _ patch: Int) { (self.major, self.minor, self.patch) = (major, minor, patch) }
@@ -51,6 +54,8 @@ enum ReleaseSource {
     /// github.com answers a release download with a redirect to its asset CDN.
     static let downloadHosts: Set<String> = ["github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com"]
     static let maxAssetBytes = 300 * 1024 * 1024
+    static let appcastName = "NotchIsland-appcast.xml"
+    static let maxAppcastBytes = 128 * 1024
 
     static func pageURL(tag: String) -> String { "https://github.com/\(owner)/\(repo)/releases/tag/\(tag)" }
     static func downloadURL(tag: String, name: String) -> String { "https://github.com/\(owner)/\(repo)/releases/download/\(tag)/\(name)" }
@@ -82,7 +87,7 @@ enum ReleaseSource {
         return URLSession(configuration: config, delegate: RefuseRedirects(), delegateQueue: nil)
     }
 
-    struct Asset: Equatable {
+    struct Asset: Equatable, Sendable {
         var name: String
         var url: URL
         var size: Int
@@ -90,7 +95,7 @@ enum ReleaseSource {
         var sha256: String
     }
 
-    enum AssetProblem: Error, Equatable {
+    enum AssetProblem: Error, Equatable, Sendable {
         /// No `NotchIsland-X.Y.Z.dmg` matching the tag.
         case missing
         case duplicate
@@ -102,7 +107,7 @@ enum ReleaseSource {
         case badSize
     }
 
-    struct Offer: Equatable {
+    struct Offer: Equatable, Sendable {
         var version: AppVersion
         var tag: String
         var title: String
@@ -110,6 +115,7 @@ enum ReleaseSource {
         var pageURL: URL
         var publishedAt: Date?
         var asset: Result<Asset, AssetProblem>
+        var appcast: URL? = nil
     }
 
     enum CheckResult: Equatable {
@@ -181,7 +187,8 @@ enum ReleaseSource {
                           notes: cleaned(release.body ?? "", limit: 8_000),
                           pageURL: page,
                           publishedAt: release.publishedAt.flatMap { ISO8601DateFormatter().date(from: $0) },
-                          asset: pickAsset(release.assets, tag: release.tagName, version: latest))
+                          asset: pickAsset(release.assets, tag: release.tagName, version: latest),
+                          appcast: pickAppcast(release.assets, tag: release.tagName))
         return .success(.available(offer))
     }
 
@@ -190,13 +197,27 @@ enum ReleaseSource {
         let matches = assets.filter { $0.name == wanted }
         guard !matches.isEmpty else { return .failure(.missing) }
         guard matches.count == 1, let raw = matches.first else { return .failure(.duplicate) }
-        if let state = raw.state, state != "uploaded" { return .failure(.notUploaded) }
+        guard raw.state == "uploaded" else { return .failure(.notUploaded) }
         guard raw.browserDownloadURL == downloadURL(tag: tag, name: wanted), let url = URL(string: raw.browserDownloadURL) else {
             return .failure(.unexpectedURL)
         }
         guard (1...maxAssetBytes).contains(raw.size) else { return .failure(.badSize) }
         guard let hex = sha256Hex(fromDigest: raw.digest) else { return .failure(.noDigest) }
         return .success(Asset(name: wanted, url: url, size: raw.size, sha256: hex))
+    }
+
+    private static func pickAppcast(_ assets: [RawAsset], tag: String) -> URL? {
+        let matches = assets.filter { $0.name == appcastName }
+        guard matches.count == 1, let feed = matches.first, feed.state == "uploaded",
+              (1...maxAppcastBytes).contains(feed.size), sha256Hex(fromDigest: feed.digest) != nil,
+              feed.browserDownloadURL == downloadURL(tag: tag, name: appcastName) else { return nil }
+        return URL(string: feed.browserDownloadURL)
+    }
+
+    static func matchesAppcastItem(url: URL?, version: String, size: UInt64, offer: Offer) -> Bool {
+        guard case .success(let asset) = offer.asset else { return false }
+        return url?.absoluteString == asset.url.absoluteString && version == offer.version.description &&
+            size == UInt64(asset.size)
     }
 
     static func sha256Hex(fromDigest digest: String?) -> String? {
@@ -237,7 +258,8 @@ final class TrustedReleaseRedirects: NSObject, URLSessionTaskDelegate, @unchecke
     var refused: Bool { lock.withLock { refusedRedirect } }
 
     static func allows(_ url: URL?) -> Bool {
-        guard let url, url.scheme == "https", let host = url.host?.lowercased() else { return false }
+        guard let url, url.scheme == "https", url.port == nil || url.port == 443,
+              url.user == nil, url.password == nil, let host = url.host?.lowercased() else { return false }
         return ReleaseSource.downloadHosts.contains(host)
     }
 
@@ -327,6 +349,10 @@ enum UpdateDownload {
     static func download(_ asset: ReleaseSource.Asset, pageURL: URL, session: URLSession, destinations: [URL],
                          fileManager: FileManager = .default,
                          progress: @escaping @Sendable (Double) -> Void = { _ in }) async throws -> URL {
+        guard TrustedReleaseRedirects.allows(asset.url), (1...ReleaseSource.maxAssetBytes).contains(asset.size) else {
+            throw Failure.redirectRefused
+        }
+        try Task.checkCancellation()
         var request = URLRequest(url: asset.url, timeoutInterval: 60)
         request.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
         request.setValue(ReleaseSource.userAgent, forHTTPHeaderField: "User-Agent")
@@ -351,16 +377,22 @@ enum UpdateDownload {
             let handle = try FileHandle(forWritingTo: part)
             var hasher = SHA256()
             var total = 0
+            var reportedPercent = 0
             var buffer = [UInt8]()
             buffer.reserveCapacity(1 << 16)
             func flush() throws {
                 guard !buffer.isEmpty else { return }
+                try Task.checkCancellation()
                 total += buffer.count
                 guard total <= asset.size else { throw Failure.sizeMismatch(expected: asset.size, actual: total) }
                 hasher.update(data: buffer)
                 try handle.write(contentsOf: buffer)
                 buffer.removeAll(keepingCapacity: true)
-                progress(min(1, Double(total) / Double(asset.size)))
+                let percent = total * 100 / asset.size
+                if percent > reportedPercent {
+                    reportedPercent = percent
+                    progress(Double(total) / Double(asset.size))
+                }
             }
             do {
                 for try await byte in bytes {
@@ -376,6 +408,7 @@ enum UpdateDownload {
             guard total == asset.size else { throw Failure.sizeMismatch(expected: asset.size, actual: total) }
             let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
             guard digest == asset.sha256 else { throw Failure.checksumMismatch }
+            try Task.checkCancellation()
             var lastError: Error = Failure.disk("no destination")
             for directory in destinations {
                 let destination: URL
@@ -486,10 +519,12 @@ final class SoftwareUpdateController: ObservableObject {
         case failed(UpdateDownload.Failure)
     }
     enum BackupState: Equatable { case idle, working, done(URL), failed(AppBackup.Failure) }
+    enum InstallState: Equatable { case idle, sparkle, failed(String) }
 
     @Published private(set) var check: CheckState = .idle
     @Published private(set) var download: DownloadState = .idle
     @Published private(set) var backup: BackupState = .idle
+    @Published private(set) var install: InstallState = .idle
 
     let currentVersion: AppVersion?
     let bundleURL: URL
@@ -498,6 +533,21 @@ final class SoftwareUpdateController: ObservableObject {
     private let destinations: [URL]
     private let backupsDirectory: URL
     private var downloadTask: Task<Void, Never>?
+    private var operationID: UUID?
+
+    var updateInProgress: Bool { operationID != nil || install == .sparkle }
+
+#if canImport(Sparkle)
+    private lazy var sparkle = SparkleReleaseInstaller { [weak self] in self?.install = .idle }
+#endif
+
+    var supportsInAppInstall: Bool {
+#if canImport(Sparkle)
+        return Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") != nil
+#else
+        return false
+#endif
+    }
 
     nonisolated static var defaultDestinations: [URL] {
         let fm = FileManager.default
@@ -538,6 +588,13 @@ final class SoftwareUpdateController: ObservableObject {
 
     var location: InstallLocation { InstallLocation.assess(bundleURL) }
 
+    var locationAllowsInAppInstall: Bool {
+        switch location {
+        case .writable, .notWritable: return true
+        case .readOnlyVolume, .translocated: return false
+        }
+    }
+
     var offer: ReleaseSource.Offer? {
         if case .done(.available(let offer)) = check { return offer }
         return nil
@@ -545,7 +602,8 @@ final class SoftwareUpdateController: ObservableObject {
 
     /// Only from the user's click. Contacts api.github.com once.
     func checkNow() {
-        guard check != .checking else { return }
+        guard check != .checking, !updateInProgress else { return }
+        let previous = offer
         check = .checking
         let request = ReleaseSource.latestRequest()
         let current = currentVersion
@@ -558,8 +616,11 @@ final class SoftwareUpdateController: ObservableObject {
                 }
                 switch ReleaseSource.evaluate(data: data, status: http?.statusCode ?? 0, headers: headers, current: current) {
                 case .success(let result):
-                    if case .done(.available(let old)) = check, case .available(let new) = result, old.version != new.version {
+                    if case .available(let new) = result, previous == new {
+                        // Keep the manual download intact for the same release.
+                    } else {
                         download = .idle
+                        install = .idle
                     }
                     check = .done(result)
                 case .failure(let failure): check = .failed(failure)
@@ -570,30 +631,52 @@ final class SoftwareUpdateController: ObservableObject {
         }
     }
 
-    /// Only from the user's click. Downloads and verifies; never opens, installs or replaces anything.
+    /// The independent signed update feed is only used after the GitHub
+    /// latest check established the exact release and its download asset.
+    func installUpdate(_ offer: ReleaseSource.Offer, lang: LanguageSettings) {
+        guard self.offer == offer, offer.appcast != nil, supportsInAppInstall, locationAllowsInAppInstall,
+              !updateInProgress, backup != .working else { return }
+#if canImport(Sparkle)
+        do {
+            install = .sparkle
+            try sparkle.check(offer)
+        } catch {
+            install = .failed(lang.t(.updInstallError, error.localizedDescription))
+        }
+#endif
+    }
+
+    /// A separate, on-demand download for Finder when an in-app update isn't available.
     func downloadUpdate() {
-        guard let offer, case .success(let asset) = offer.asset else { return }
-        if case .downloading = download { return }
+        guard let offer, case .success(let asset) = offer.asset, !updateInProgress else { return }
+        let id = UUID()
+        operationID = id
+        install = .idle
         download = .downloading(0)
         let session = downloadSession
         let destinations = destinations
         let report: @Sendable (Double) -> Void = { [weak self] fraction in
             Task { @MainActor in
-                guard let self, case .downloading = self.download else { return }
+                guard let self, self.operationID == id, case .downloading = self.download else { return }
                 self.download = .downloading(fraction)
             }
         }
         downloadTask = Task {
+            defer {
+                if operationID == id { operationID = nil; downloadTask = nil }
+            }
             do {
                 let url = try await UpdateDownload.download(asset, pageURL: offer.pageURL, session: session,
                                                             destinations: destinations, progress: report)
-                guard !Task.isCancelled else { try? FileManager.default.removeItem(at: url); return }
+                guard operationID == id, !Task.isCancelled else {
+                    try? FileManager.default.removeItem(at: url)
+                    return
+                }
                 download = .verified(url)
             } catch {
-                guard !Task.isCancelled else { return }
+                guard operationID == id, !Task.isCancelled else { return }
                 download = .failed(UpdateDownload.failure(for: error))
             }
-            downloadTask = nil
         }
     }
 
@@ -601,6 +684,7 @@ final class SoftwareUpdateController: ObservableObject {
         guard case .downloading = download else { return }
         downloadTask?.cancel()
         downloadTask = nil
+        operationID = nil
         download = .failed(.cancelled)
     }
 
@@ -618,6 +702,55 @@ final class SoftwareUpdateController: ObservableObject {
     }
 }
 
+#if canImport(Sparkle)
+/// Sparkle presents the install confirmation and verifies the signed appcast
+/// and archive. The delegate only permits the exact GitHub release we offered.
+@MainActor
+private final class SparkleReleaseInstaller: NSObject, SPUUpdaterDelegate {
+    private var offer: ReleaseSource.Offer?
+    private var started = false
+    private let finished: () -> Void
+    private lazy var updater = SPUUpdater(hostBundle: .main, applicationBundle: .main,
+                                          userDriver: SPUStandardUserDriver(hostBundle: .main, delegate: nil),
+                                          delegate: self)
+
+    init(finished: @escaping () -> Void) { self.finished = finished }
+
+    func check(_ offer: ReleaseSource.Offer) throws {
+        self.offer = offer
+        if !started {
+            try updater.start()
+            started = true
+        }
+        guard updater.canCheckForUpdates else { throw URLError(.resourceUnavailable) }
+        updater.checkForUpdates()
+    }
+
+    func feedURLString(for updater: SPUUpdater) -> String? { offer?.appcast?.absoluteString }
+
+    func bestValidUpdate(in appcast: SUAppcast, for updater: SPUUpdater) -> SUAppcastItem? {
+        guard let offer else { return SUAppcastItem.empty() }
+        return appcast.items.first {
+            ($0.deltaUpdates?.isEmpty ?? true) && ReleaseSource.matchesAppcastItem(url: $0.fileURL, version: $0.displayVersionString,
+                                             size: $0.contentLength, offer: offer)
+        } ?? SUAppcastItem.empty()
+    }
+
+    func updater(_ updater: SPUUpdater, shouldProceedWithUpdate item: SUAppcastItem, updateCheck: SPUUpdateCheck) throws {
+        guard let offer, !item.isDeltaUpdate, (item.deltaUpdates?.isEmpty ?? true),
+              ReleaseSource.matchesAppcastItem(url: item.fileURL, version: item.displayVersionString,
+                                                          size: item.contentLength, offer: offer) else {
+            throw URLError(.badServerResponse)
+        }
+    }
+
+    func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: Error?) {
+        offer = nil
+        finished()
+    }
+}
+#endif
+
 // MARK: - Settings section
 
 struct SoftwareUpdateSection: View {
@@ -630,7 +763,7 @@ struct SoftwareUpdateSection: View {
                 Text(lang.t(.updCurrent, updater.currentVersionText))
                 Spacer()
                 if updater.check == .checking { ProgressView().controlSize(.small) }
-                Button(lang.t(.updCheck)) { updater.checkNow() }.disabled(updater.check == .checking)
+                Button(lang.t(.updCheck)) { updater.checkNow() }.disabled(updater.check == .checking || updater.updateInProgress)
             }
             checkStatus
             if let offer = updater.offer { offerView(offer) }
@@ -662,7 +795,7 @@ struct SoftwareUpdateSection: View {
             if !offer.notes.isEmpty {
                 Text(lang.t(.updNotes)).font(.caption).foregroundStyle(.secondary)
                 ScrollView {
-                    Text(notes(offer.notes)).font(.callout).textSelection(.enabled)
+                    Text(offer.notes).font(.callout).textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .frame(maxHeight: 150)
@@ -678,14 +811,28 @@ struct SoftwareUpdateSection: View {
                 Spacer()
                 Button(lang.t(.updViewOnGitHub)) { NSWorkspace.shared.open(offer.pageURL) }
             }
-            if case .verified(let file) = updater.download { installGuide(file) }
+            if case .success = offer.asset {
+                locationNote
+                if updater.locationAllowsInAppInstall {
+                    if offer.appcast != nil && updater.supportsInAppInstall {
+                        Button(lang.t(.updInstallRestart)) { updater.installUpdate(offer, lang: lang) }
+                            .disabled(updater.updateInProgress || updater.backup == .working)
+                    } else {
+                        Text(lang.t(.updNoSignedFeed)).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            if case .failed(let reason) = updater.install {
+                Label(reason, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
+            }
+            if case .verified(let file) = updater.download, !updater.updateInProgress { installGuide(file) }
         }
     }
 
     @ViewBuilder private var downloadControls: some View {
         switch updater.download {
         case .idle, .failed:
-            Button(lang.t(.updDownload)) { updater.downloadUpdate() }
+            Button(lang.t(.updDownload)) { updater.downloadUpdate() }.disabled(updater.updateInProgress)
             if case .failed(let failure) = updater.download {
                 Text(downloadFailureText(failure)).font(.caption).foregroundStyle(.orange)
             }
@@ -701,7 +848,6 @@ struct SoftwareUpdateSection: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(lang.t(.updVerified, file.path)).font(.caption).textSelection(.enabled)
             Text(lang.t(.updAuthenticity)).font(.caption).foregroundStyle(.secondary)
-            locationNote
             Text(lang.t(.updSteps)).font(.caption)
             Text(lang.t(.updGatekeeper)).font(.caption).foregroundStyle(.secondary)
             HStack {
@@ -732,10 +878,6 @@ struct SoftwareUpdateSection: View {
         case .notWritable(let folder): Text(lang.t(.updLocNeedsAdmin, folder.path)).font(.caption).foregroundStyle(.secondary)
         case .writable: Text(lang.t(.updLocCurrent, updater.bundleURL.path)).font(.caption).foregroundStyle(.secondary)
         }
-    }
-
-    private func notes(_ text: String) -> AttributedString {
-        (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(text)
     }
 
     private func problemText(_ problem: ReleaseSource.AssetProblem) -> String {

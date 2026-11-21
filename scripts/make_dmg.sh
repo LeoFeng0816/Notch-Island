@@ -88,11 +88,14 @@ if strings -a "$BIN" | grep '/Users/' >/dev/null; then
   echo 'Unexpected absolute home path in executable.' >&2
   exit 1
 fi
-if [[ -n "$(find "$INSTALLED" \( -name '*.png' -o -name '*.jpg' -o -name '*.mov' -o -name '*.json' -o -name '.DS_Store' \) -print -quit)" ]]; then
+if [[ -n "$(find "$INSTALLED" -path "$INSTALLED/Contents/Frameworks/Sparkle.framework" -prune -o \
+    \( -name '*.png' -o -name '*.jpg' -o -name '*.mov' -o -name '*.json' -o -name '.DS_Store' \) -print -quit)" ]]; then
   echo 'Unexpected file in app bundle.' >&2
   exit 1
 fi
-echo '    universal binary, both slices’ signatures, Info.plist and payload verified'
+[[ -f "$INSTALLED/Contents/Resources/Sparkle-LICENSE.txt" ]]
+[[ "$(plutil -extract CFBundleShortVersionString raw "$INSTALLED/Contents/Frameworks/Sparkle.framework/Resources/Info.plist")" == "2.10.0" ]]
+echo '    universal binary, both slices’ signatures, Info.plist, Sparkle and payload verified'
 
 if [[ "$(sysctl -n hw.optional.arm64 2>/dev/null || true)" == 1 ]]; then
   /usr/bin/arch -arm64 "$BIN" --self-test

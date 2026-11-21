@@ -575,23 +575,94 @@ struct MusicBars: View {
     }
 
     var body: some View {
-        let gradient = LinearGradient(colors: Self.colors(for: palette), startPoint: .top, endPoint: .bottom)
         let height = Self.height(isPlaying: isPlaying, realLevels: realLevels)
-        // Paused → the timeline stops and the bars rest, as before.
-        TimelineView(.animation(minimumInterval: 1 / 30, paused: !isPlaying)) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
-            HStack(alignment: .center, spacing: 2) {
-                ForEach(0..<Self.barCount, id: \.self) { i in
-                    Capsule()
-                        .fill(gradient)
-                        .frame(width: 2.5)
-                        .frame(height: height * Self.level(index: i, time: t, isPlaying: isPlaying, realLevels: realLevels))
-                }
+        MusicBarsDrawing(isPlaying: isPlaying, palette: palette, levels: realLevels, height: height)
+            .frame(width: 18, height: height)
+            .accessibilityHidden(true)
+    }
+}
+
+struct LiveMusicBars: View {
+    @EnvironmentObject private var audioMonitor: AudioLevelMonitor
+    let isPlaying: Bool
+    let palette: ArtworkPalette?
+
+    var body: some View {
+        MusicBars(isPlaying: isPlaying, palette: palette, realLevels: audioMonitor.levels)
+    }
+}
+
+/// Keep the per-frame work inside a drawing view. SwiftUI only updates when
+/// playback, palette, or real bands change, rather than rebuilding the view tree
+/// for each frame of a decorative animation that can run for hours.
+private struct MusicBarsDrawing: NSViewRepresentable {
+    let isPlaying: Bool
+    let palette: ArtworkPalette?
+    let levels: [Float]?
+    let height: CGFloat
+
+    func makeNSView(context: Context) -> BarsView { BarsView() }
+
+    func updateNSView(_ view: BarsView, context: Context) {
+        view.configure(self)
+    }
+
+    static func dismantleNSView(_ view: BarsView, coordinator: ()) { view.stopTimer() }
+
+    final class BarsView: NSView {
+        private var timer: Timer?
+        private var style: MusicBarsDrawing?
+        private var gradient: NSGradient?
+
+        func configure(_ style: MusicBarsDrawing) {
+            if gradient == nil || self.style?.palette != style.palette {
+                gradient = NSGradient(colors: MusicBars.colors(for: style.palette).map(NSColor.init))
             }
-            .frame(maxHeight: .infinity)
+            self.style = style
+            updateTimer()
+            needsDisplay = true
         }
-        .frame(width: 18, height: height)
-        .animation(.easeInOut(duration: 0.6), value: palette)
-        .accessibilityHidden(true)
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            updateTimer()
+        }
+
+        private func updateTimer() {
+            guard window != nil, style?.isPlaying == true, style?.levels?.isEmpty != false else {
+                stopTimer()
+                return
+            }
+            guard timer == nil else { return }
+            let animation = Timer(timeInterval: 1 / 30, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.needsDisplay = true }
+            }
+            animation.tolerance = 0.005
+            RunLoop.main.add(animation, forMode: .common)
+            timer = animation
+        }
+
+        func stopTimer() {
+            timer?.invalidate()
+            timer = nil
+        }
+
+        override func draw(_ dirtyRect: NSRect) {
+            super.draw(dirtyRect)
+            guard let style, let gradient else { return }
+            let width: CGFloat = 2.5
+            let stride: CGFloat = width + 2
+            let totalWidth = stride * CGFloat(MusicBars.barCount - 1) + width
+            let time = Date().timeIntervalSinceReferenceDate
+            for index in 0..<MusicBars.barCount {
+                let fraction = MusicBars.level(index: index, time: time, isPlaying: style.isPlaying, realLevels: style.levels)
+                let height = style.height * fraction
+                let x = bounds.midX - totalWidth / 2 + stride * CGFloat(index)
+                let rect = NSRect(x: x, y: bounds.midY - height / 2, width: width, height: height)
+                gradient.draw(in: NSBezierPath(roundedRect: rect, xRadius: width / 2, yRadius: width / 2), angle: -90)
+            }
+        }
     }
 }

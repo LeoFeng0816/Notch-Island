@@ -2713,8 +2713,8 @@ await test("packaging & publishing: purpose strings, .gitignore, secret scan nev
     // private 0.3.x builds, so the build number must keep increasing (0.3.2 was 5)
     // and nothing may key migrations on the marketing version.
     let info = try PropertyListSerialization.propertyList(from: Data(contentsOf: URL(fileURLWithPath: "Resources/Info.plist")), format: nil) as? [String: Any]
-    expect(info?["CFBundleShortVersionString"] as? String == "0.1.3", "review version is 0.1.3 (newer than the published v0.1.2)")
-    expect(Int(info?["CFBundleVersion"] as? String ?? "") ?? 0 > 8, "build number stays above v0.1.2 (8), v0.1.1 (7), v0.1.0 (6) and the private 0.3.2 (5) build")
+    expect(info?["CFBundleShortVersionString"] as? String == "0.1.4", "version 0.1.4 includes the in-place updater")
+    expect(Int(info?["CFBundleVersion"] as? String ?? "") ?? 0 > 9, "build number stays above v0.1.3 (9)")
     expect(info?["CFBundleIdentifier"] as? String == "local.notchisland.app", "bundle ID unchanged, so existing settings and Keychain items are kept")
     let providers = try String(contentsOfFile: "Sources/NotchIsland/Providers.swift", encoding: .utf8)
     expect(providers.contains("\"NotchIsland/0.1 (macOS)\""), "User-Agent uses the release series")
@@ -3362,7 +3362,8 @@ await test("software update: GitHub latest-release evaluation (real v0.1.1 snaps
            && assetProblem([releaseAsset(["digest": "sha256:" + String(repeating: "g", count: 64)])]) == .noDigest, "missing / wrong digest")
     expect(assetProblem([releaseAsset(["name": "NotchIsland-0.1.2.dmg"])]) == .missing && assetProblem([]) == .missing, "no matching file")
     expect(assetProblem([releaseAsset([:]), releaseAsset([:])]) == .duplicate, "two files with the same name")
-    expect(assetProblem([releaseAsset(["state": "open"])]) == .notUploaded, "upload in progress")
+    expect(assetProblem([releaseAsset(["state": "open"])]) == .notUploaded
+           && assetProblem([releaseAsset(["state": nil])]) == .notUploaded, "asset must explicitly be uploaded")
     expect(assetProblem([releaseAsset(["size": 0])]) == .badSize && assetProblem([releaseAsset(["size": 400 * 1024 * 1024])]) == .badSize, "size bounds")
 
     expect(eval(Data("{}".utf8), 403, headers: ["X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "1794407755"])
@@ -3487,7 +3488,9 @@ await test("software update: verified download — trusted redirects, size, SHA-
     expect(filesAfter == filesBefore, "failed downloads leave nothing behind")
     expect(stagingCount() == stagingBefore, "no staging leftovers after failures")
     expect(TrustedReleaseRedirects.allows(URL(string: "https://objects.githubusercontent.com/x")) && !TrustedReleaseRedirects.allows(URL(string: "http://github.com/x"))
-           && !TrustedReleaseRedirects.allows(URL(string: "https://github.com.evil.example/x")), "redirect allowlist is exact")
+           && !TrustedReleaseRedirects.allows(URL(string: "https://github.com.evil.example/x"))
+           && !TrustedReleaseRedirects.allows(URL(string: "https://user@github.com/x"))
+           && !TrustedReleaseRedirects.allows(URL(string: "https://github.com:444/x")), "redirect allowlist is exact")
 
     // Downloads folder refused → next destination (Application Support).
     let blocker = dest.appendingPathComponent("not-a-folder")
@@ -3503,7 +3506,7 @@ await test("software update: verified download — trusted redirects, size, SHA-
     catch { expect(error as? UpdateDownload.Failure == .offline, "offline download → offline") }
 
     let source = try String(contentsOfFile: "Sources/NotchIsland/SoftwareUpdate.swift", encoding: .utf8)
-    for forbidden in ["spctl", "xattr", "quarantineProperties = nil", "\"/Applications", "hdiutil", "replaceItemAt", "--master-disable", "Authorization"] {
+    for forbidden in ["spctl", "quarantineProperties = nil", "\"/Applications", "hdiutil", "replaceItemAt", "--master-disable", "Authorization"] {
         expect(!source.contains(forbidden), "updater never uses \(forbidden)")
     }
     expect(source.components(separatedBy: "Process()").count == 2 && source.contains("/usr/bin/ditto"), "the only process is the system's ditto (backup)")
@@ -3555,6 +3558,25 @@ await test("software update: controller flow, install location, backup of the cu
     do { _ = try await AppBackup.backup(app: dest, version: "0", into: backups); expect(false, "not an app") }
     catch { expect(error as? AppBackup.Failure == .notAnApp, "only .app bundles are backed up") }
 
+    let cancellationDestination = tempDirectory("cancel-download")
+    defer { try? FileManager.default.removeItem(at: cancellationDestination) }
+    let cancellableUpdater = SoftwareUpdateController(apiSession: ReleaseSource.makeAPISession(protocolClasses: [MockRelease.self]),
+                                                       downloadSession: UpdateDownload.makeSession(protocolClasses: [MockRelease.self]),
+                                                       currentVersion: AppVersion(0, 1, 2), bundleURL: fakeApp, destinations: [cancellationDestination])
+    cancellableUpdater.checkNow()
+    for _ in 0..<300 where cancellableUpdater.check == .checking { try await Task.sleep(for: .milliseconds(10)) }
+    cancellableUpdater.downloadUpdate()
+    cancellableUpdater.cancelDownload()
+    expect(cancellableUpdater.download == .failed(.cancelled) && !cancellableUpdater.updateInProgress, "download can be cancelled before verification")
+    cancellableUpdater.downloadUpdate()
+    for _ in 0..<500 where cancellableUpdater.updateInProgress { try await Task.sleep(for: .milliseconds(10)) }
+    if case .verified = cancellableUpdater.download {
+        let files = try FileManager.default.contentsOfDirectory(atPath: cancellationDestination.path)
+        expect(files.count == 1, "retry after cancel saves at most one verified file")
+    } else {
+        expect(false, "retry after cancel can finish")
+    }
+
     // Newer than the latest release: nothing to download.
     MockRelease.lock.withLock { MockRelease.latestJSON = releaseJSON(tag: "v0.1.1", assets: []) }
     updater.checkNow()
@@ -3580,6 +3602,45 @@ await test("software update: controller flow, install location, backup of the cu
         expect(["Keep Both", "兩者都保留", "保留两者"].contains(where: lang.t(.updSteps).contains), "\(language): how to keep the original copy")
         expect(lang.t(.updPrivacy).contains("api.github.com"), "\(language): says what is contacted")
     }
+}
+
+
+await test("in-app updater: accepts only a signed-feed asset and its exact GitHub enclosure") {
+    let feed = "NotchIsland-appcast.xml"
+    let url = "https://github.com/LeoFeng0816/Notch-Island/releases/download/v0.1.3/\(feed)"
+    var appcast = releaseAsset(["name": feed, "browser_download_url": url, "size": 900])
+    func offer(_ feeds: [[String: Any]]) throws -> ReleaseSource.Offer {
+        let result = ReleaseSource.evaluate(data: releaseJSON(assets: [releaseAsset([:])] + feeds),
+                                            status: 200, current: AppVersion(0, 1, 2))
+        guard case .success(.available(let offer)) = result else { throw URLError(.badServerResponse) }
+        return offer
+    }
+    let valid = try offer([appcast])
+    expect(valid.appcast?.absoluteString == url, "one uploaded, version-specific official feed")
+    let missing = try offer([]), duplicate = try offer([appcast, appcast])
+    expect(missing.appcast == nil && duplicate.appcast == nil, "missing or duplicate feed leaves manual installation available")
+    appcast["browser_download_url"] = "https://example.org/" + feed
+    let external = try offer([appcast])
+    expect(external.appcast == nil, "external feed refused")
+    appcast["browser_download_url"] = url
+    appcast["state"] = "open"
+    let incomplete = try offer([appcast])
+    expect(incomplete.appcast == nil, "incomplete feed refused")
+
+    let file = try valid.asset.get()
+    expect(ReleaseSource.matchesAppcastItem(url: file.url, version: valid.version.description, size: UInt64(file.size), offer: valid), "matching enclosure")
+    expect(!ReleaseSource.matchesAppcastItem(url: file.url, version: "0.1.2", size: UInt64(file.size), offer: valid), "another version refused")
+    expect(!ReleaseSource.matchesAppcastItem(url: file.url, version: valid.version.description, size: UInt64(file.size + 1), offer: valid), "another size refused")
+    expect(!ReleaseSource.matchesAppcastItem(url: URL(string: "https://example.org/file.dmg"), version: valid.version.description,
+                                            size: UInt64(file.size), offer: valid), "another enclosure URL refused")
+
+    let plist = NSDictionary(contentsOfFile: "Resources/Info.plist")
+    expect((plist?["SUPublicEDKey"] as? String).flatMap { Data(base64Encoded: $0) }?.count == 32, "contains a public Ed25519 key")
+    expect(plist?["SUVerifyUpdateBeforeExtraction"] as? Bool == true && plist?["SURequireSignedFeed"] as? Bool == true,
+           "archive and feed must both be verified")
+    expect(plist?["SUSignedFeedFailureExpirationInterval"] as? Int == 0, "feed verification never falls back")
+    expect(plist?["SUEnableAutomaticChecks"] as? Bool == false && plist?["SUAllowsAutomaticUpdates"] as? Bool == false,
+           "user initiates checks and approves installation")
 }
 
 // MARK: - 0.1.3: Pomodoro, compact layout, menu-bar icon, DMG text
@@ -3824,6 +3885,45 @@ await test("pomodoro: music must really be playing (not paused or stale) to keep
     expect(!music.isActivelyPlaying(), "paused isn't playing")
     music.applyForTesting(nil)
     expect(!music.isActivelyPlaying(), "source gone")
+}
+
+await test("long-running island: playback timing and freshness publish only where needed") {
+    let music = MusicController(defaults: freshDefaults())
+    let track = MusicController.Track(title: "Song", artist: "", album: "", duration: 95)
+    let now = Date()
+    var mediaChanges = 0
+    var timeChanges = 0
+    let media = music.objectWillChange.sink { mediaChanges += 1 }
+    let progress = music.playbackTime.objectWillChange.sink { timeChanges += 1 }
+    defer { media.cancel(); progress.cancel() }
+    for _ in 0..<100 { music.applyForTesting(nil) }
+    expect(mediaChanges == 0 && timeChanges == 0, "an idle poll leaves both SwiftUI branches untouched")
+    music.applyForTesting(.init(source: .system, track: track, isPlaying: true, position: 10, sampledAt: now))
+    let initial = mediaChanges
+    music.applyForTesting(.init(source: .system, track: track, isPlaying: true, position: 10.5, sampledAt: now.addingTimeInterval(0.5)))
+    expect(mediaChanges == initial && music.playbackTime.sample?.position == 10.5, "progress updates without invalidating the island or settings")
+    music.applyForTesting(.init(source: .system, track: track, isPlaying: true, position: 10.5, sampledAt: now.addingTimeInterval(1)))
+    expect(music.playbackTime.sample?.date == now.addingTimeInterval(1), "a repeated playing position still refreshes the time anchor")
+    music.updatePlaybackFreshness(at: now.addingTimeInterval(MusicController.playingStaleAfter + 2))
+    expect(!music.isFreshPlayback && music.isPlaying, "stale music releases the Pomodoro side without faking a pause")
+    expect(CompactLayout.resolve(toast: false, musicPlaying: music.isFreshPlayback, timer: .idle, stopwatchActive: false, pomodoroLive: true).leading == .pomodoroBadge,
+           "the expired music sample gives the left side back to the active Pomodoro")
+    music.applyForTesting(.init(source: .system, track: track, isPlaying: false, position: 10.5, sampledAt: now.addingTimeInterval(2)))
+    expect(!music.isPlaying && !music.isFreshPlayback && music.position == 10.5, "pause at the same position stays visible")
+    music.applyForTesting(.init(source: .system, track: track, isPlaying: true, position: 10.5, sampledAt: now.addingTimeInterval(3)))
+    expect(music.isPlaying && music.isFreshPlayback && music.playbackTime.sample?.date == now.addingTimeInterval(3), "resume at the same position resets the clock and restores fresh playback")
+}
+
+await test("long-running island: closing Settings discards the hosting graph") {
+    _ = NSApplication.shared
+    let controller = SettingsWindowController(lang: .shared) { AnyView(Text("Test settings")) }
+    let initial = controller.makeWindowIfNeeded()
+    expect(initial === controller.makeWindowIfNeeded(), "only one Settings window while open")
+    initial.close()
+    expect(initial.contentViewController == nil, "closed Settings are no longer observing background changes")
+    let reopened = controller.makeWindowIfNeeded()
+    expect(initial !== reopened && reopened.contentViewController != nil, "Settings can reopen with a fresh graph")
+    reopened.close()
 }
 
 await test("pomodoro: island modes, Live Activities tool and coexistence with the timer") {

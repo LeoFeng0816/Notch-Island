@@ -17,24 +17,35 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     }
 
     func show() {
-        if window == nil {
-            let hosting = NSHostingController(rootView: makeView())
-            let window = NSWindow(contentViewController: hosting)
-            window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-            window.setContentSize(NSSize(width: 520, height: 640))
-            window.minSize = NSSize(width: 460, height: 420)
-            window.isReleasedWhenClosed = false
-            window.delegate = self
-            window.center()
-            self.window = window
-            // Window title follows the in-app language.
-            cancellable = lang.$language.sink { [weak self] _ in
-                DispatchQueue.main.async { MainActor.assumeIsolated { self?.window?.title = self?.lang.t(.settingsTitle) ?? "" } }
-            }
-        }
-        window?.title = lang.t(.settingsTitle)
+        let window = makeWindowIfNeeded()
+        window.title = lang.t(.settingsTitle)
         NSApp.activate(ignoringOtherApps: true)
-        window?.makeKeyAndOrderFront(nil)
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    func makeWindowIfNeeded() -> NSWindow {
+        if let window { return window }
+        let hosting = NSHostingController(rootView: makeView())
+        let window = NSWindow(contentViewController: hosting)
+        window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+        window.setContentSize(NSSize(width: 520, height: 640))
+        window.minSize = NSSize(width: 460, height: 420)
+        window.isReleasedWhenClosed = false
+        window.delegate = self
+        window.center()
+        self.window = window
+        // Window title follows the in-app language.
+        cancellable = lang.$language.sink { [weak self] _ in
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.window?.title = self?.lang.t(.settingsTitle) ?? "" } }
+        }
+        return window
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard notification.object as? NSWindow === window else { return }
+        window?.contentViewController = nil
+        window = nil
+        cancellable = nil
     }
 
     var isVisible: Bool { window?.isVisible ?? false }
@@ -44,17 +55,17 @@ struct SettingsView: View {
     @ObservedObject var lang: LanguageSettings
     @ObservedObject var settings: WidgetSettings
     @ObservedObject var model: IslandViewModel
-    @ObservedObject var music: MusicController
+    let music: MusicController
     @ObservedObject var calendar: CalendarStore
     @ObservedObject var location: LocationProvider
-    @ObservedObject var audioMonitor: AudioLevelMonitor
+    let audioMonitor: AudioLevelMonitor
     @ObservedObject var stockSearch: StockSearchModel
     @ObservedObject var clipboard: ClipboardStore
     @ObservedObject var power: PowerAlertController
     @ObservedObject var audDRecognition: AudDRecognition
     @ObservedObject var songFinder: SongFinderRecognition
-    @ObservedObject var updater: SoftwareUpdateController
-    @ObservedObject var pomodoro: PomodoroTimer
+    let updater: SoftwareUpdateController
+    let pomodoro: PomodoroTimer
     /// Shared with the island (controller); asks Location Services once.
     var useCurrentLocation: () -> Void
     let device: DeviceInfo
@@ -77,7 +88,7 @@ struct SettingsView: View {
             clockSection
             clipboardSection
             recognitionSection
-            MediaSettingsSection(lang: lang, music: music, audioMonitor: audioMonitor)
+            MediaSettingsSection(diagnostics: music.browserDiagnostics, lang: lang, music: music, audioMonitor: audioMonitor)
             deviceSection
         }
         .formStyle(.grouped)
@@ -663,6 +674,7 @@ struct ClipboardPermissionRows: View {
 
 /// Browser media opt-in, permission status and setup instructions.
 struct MediaSettingsSection: View {
+    @ObservedObject var diagnostics: MusicController.BrowserDiagnostics
     @ObservedObject var lang: LanguageSettings
     @ObservedObject var music: MusicController
     @ObservedObject var audioMonitor: AudioLevelMonitor
@@ -737,7 +749,7 @@ struct MediaSettingsSection: View {
                                 Button(lang.t(.openSettings)) { music.openAutomationSettings() }
                             }
                         }
-                        if let d = music.browserDiagnostics[browser] {
+                        if let d = diagnostics.scans[browser] {
                             Text(diagnosticsText(d))
                                 .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)

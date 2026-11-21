@@ -36,6 +36,7 @@ if [[ $RELEASE == 1 ]]; then
 fi
 
 SDK="$(xcrun --show-sdk-path --sdk macosx)"
+SPARKLE="$("$ROOT/scripts/fetch_sparkle.sh")"
 SOURCES=("$ROOT"/Sources/NotchIsland/*.swift)
 
 if [[ $UNIVERSAL == 1 ]]; then
@@ -50,7 +51,9 @@ mkdir -p "$BUILD_DIR/obj"
 STAGING="$(mktemp -d "$BUILD_DIR/.notchisland-build.XXXXXX")"
 trap 'rm -rf "$STAGING"' EXIT
 STAGED_APP="$STAGING/$APP_NAME.app"
-mkdir -p "$STAGED_APP/Contents/MacOS" "$STAGED_APP/Contents/Resources"
+mkdir -p "$STAGED_APP/Contents/MacOS" "$STAGED_APP/Contents/Resources" "$STAGED_APP/Contents/Frameworks"
+ditto "$SPARKLE/Sparkle.framework" "$STAGED_APP/Contents/Frameworks/Sparkle.framework"
+cp "$SPARKLE/LICENSE" "$STAGED_APP/Contents/Resources/Sparkle-LICENSE.txt"
 
 BINARIES=()
 for arch in "${ARCHS[@]}"; do
@@ -63,6 +66,7 @@ for arch in "${ARCHS[@]}"; do
     -module-name "$APP_NAME" \
     -sdk "$SDK" \
     -target "$arch-apple-macos$MIN_MACOS" \
+    -F "$SPARKLE" -framework Sparkle -Xlinker -rpath -Xlinker '@executable_path/../Frameworks' \
     -framework AppKit -framework SwiftUI -framework Combine -framework IOKit -framework Security -framework LocalAuthentication \
     -o "$out" \
     "${SOURCES[@]}"
@@ -90,6 +94,10 @@ plutil -lint "$STAGED_APP/Contents/Info.plist" >/dev/null
 # post events, Automation) don't survive a rebuild. To keep them, sign with a
 # real identity, e.g. NOTCHISLAND_SIGN_IDENTITY="Apple Development: Name (TEAMID)".
 if [[ $RELEASE == 1 ]]; then
+  SPARKLE_VERSION_DIR="$STAGED_APP/Contents/Frameworks/Sparkle.framework/Versions/B"
+  for helper in "$SPARKLE_VERSION_DIR/Autoupdate" "$SPARKLE_VERSION_DIR/Updater.app" "$SPARKLE_VERSION_DIR"/XPCServices/*.xpc "$SPARKLE_VERSION_DIR"; do
+    codesign --force --sign "$SIGN_IDENTITY" --timestamp --options runtime --preserve-metadata=entitlements "$helper"
+  done
   codesign --force --sign "$SIGN_IDENTITY" --timestamp --options runtime \
     --entitlements "$ROOT/Resources/DeveloperID.entitlements" "$STAGED_APP"
 else

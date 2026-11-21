@@ -15,7 +15,7 @@ Turn your MacBook notch into a quick place for music, timers, and widgets. Notch
 - **Music and activities:** see artwork, track details, and playback progress for supported sources; control playback and seeking. Countdowns, stopwatches and the Pomodoro appear while active; with music playing, music stays on the left and the Pomodoro on the right.
 - **Widgets:** choose and arrange up to four widgets, including battery, weather, stocks, clock, calendar, timer, stopwatch, and Pomodoro. Switch between activities and widgets when something is active.
 - **Quick actions:** clipboard history, screenshot to clipboard, screen recording, and music recognition (Song Finder by default).
-- **Software update:** check GitHub for the latest release on demand, verify the download's SHA-256, and follow a guided install.
+- **Software update:** check GitHub for the latest release on demand. Confirm in Sparkle to download and verify the release, update the installed copy, and relaunch.
 - **Power alerts:** see charging status when power is connected and a low-battery reminder with a shortcut to macOS Battery settings.
 
 ## Installation
@@ -38,7 +38,9 @@ The app is ad-hoc signed and **not notarized by Apple**. Only if you trust the d
 - **Clipboard:** choose whether to keep history and for how long. Select an item to copy it; automatic paste can be attempted after granting permission to send keystrokes.
 - **Screenshots and recording:** screenshots are copied to the clipboard. Recording opens the native macOS recording toolbar, where you start the recording.
 - **Music recognition:** uses [Song Finder](https://songfinder.dev) by default, with no account or API key. The first press explains where the audio goes and asks for your consent. A match shows the title and artist, with **Google Search** (artist and title prefilled) and **Copy** (“Artist - Title”). “No match” is shown only when Song Finder says nothing matched; permissions, connectivity, timeouts, rate limits and server errors are reported separately. In settings you can switch to macOS Recognize Music (results stay in Control Center) or AudD (your own API token).
-- **Software update:** use **Check for Updates…** in the menu bar or **Settings › Software Update**. If a newer stable release exists, its version and notes are shown and you can **Download and Verify**: the file's size and SHA-256 must match what GitHub lists, it is saved to Downloads, and macOS's quarantine flag is kept. The app never installs or replaces itself. Use **Back Up Current App** first, then follow the on-screen steps to drag it into Applications (choose **Keep Both** to keep the old copy too). Settings, clipboard history and Keychain items are kept; permissions may need to be granted again. A matching checksum only shows the file is the one attached to the GitHub release; it is not Apple verification. New versions are also unnotarized, so allow them as described in Installation.
+- **Software update:** use **Check for Updates…** from the menu bar or **Settings › Software Update** to see the latest stable GitHub release. Choose **Install Update…** and confirm in Sparkle. Sparkle verifies the Ed25519 signatures on the release feed and DMG, updates the app at its current location, and relaunches it. macOS may ask for an administrator password when updating a protected location.
+- **Manual installation:** if you're on v0.1.3 or earlier, install once from the DMG to get in-app updates. If the app is running from the disk image, the release lacks a signed feed, or in-app installation fails, use **Download and Verify**. This checks the size and SHA-256 published by GitHub. Then follow the installation steps above. **Back Up Current App** saves a copy if you want to keep the old bundle. Settings, clipboard history, and Keychain data are preserved. macOS may ask you to grant privacy permissions again for an updated ad-hoc build.
+- **Signing:** public releases are ad-hoc signed and unnotarized. Gatekeeper still checks the initial manual installation. In-app updates use an embedded public key to verify the release signature, and Sparkle handles installing verified updates. The SHA-256 published by GitHub checks the integrity of manual downloads.
 
 ## Privacy and permissions
 
@@ -59,7 +61,13 @@ With Xcode or Apple Command Line Tools installed, run from the project root:
 open build/NotchIsland.app
 ```
 
-Run offline tests with `Tests/run_tests.sh`; the DMG packaging script is `scripts/make_dmg.sh`. The app lives in the menu bar rather than the Dock, where you can open settings or quit.
+Run offline tests with `Tests/run_tests.sh`. Run `Tests/run_sparkle_smoke.sh` to test signature failures, cancellation and successful installation with disposable apps. Build the DMG with `scripts/make_dmg.sh`. The build downloads a pinned release of Sparkle, verifies its SHA-256, and bundles the upstream license. The app lives in the menu bar rather than the Dock, where you can open settings or quit.
+
+### Publishing signed updates
+
+Build and verify the DMG with `scripts/make_dmg.sh`, then run `scripts/make_update_feed.sh`. The signing script uses the Sparkle Ed25519 private key in the login Keychain under the account `local.notchisland.release`. macOS may prompt for Keychain access the first time Sparkle's signing tool uses it. Attach both `dist/NotchIsland-<version>.dmg` and `dist/NotchIsland-appcast.xml` to the same stable GitHub Release, tagged `v<version>`. Re-sign the artifacts after rebuilding the DMG.
+
+Increment `CFBundleVersion` with each release and match `CFBundleShortVersionString` to the tag. Keep the release private key out of the repository and release files. Maintainers can back it up with Sparkle's `generate_keys --account local.notchisland.release -x <encrypted-offline-backup-path>` and transfer it using `-f`. Verify your backup before changing Macs or reinstalling macOS. If the key is lost, users of current ad-hoc builds would need to install a new version with a replacement public key manually.
 
 ## Donation
 

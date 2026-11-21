@@ -133,6 +133,7 @@ enum L10nKey: CaseIterable {
     case updNetwork, updRateLimited, updNoRelease, updHTTP, updBadResponse, updPrerelease
     case updBadTag, updUntrusted, updUnknownCurrent, updRedirect, updSizeMismatch, updChecksumMismatch
     case updDisk, updDownloadCancelled
+    case updInstallRestart, updNoSignedFeed, updInstallError
     // 0.1.3: Pomodoro
     case pomodoro, pomoFocus, pomoShortBreak, pomoLongBreak, pomoReady, pomoBreakOver
     case pomoCompleted, pomoSetA11y, pomoA11yRemaining, pomoA11ySeparator, pomoA11yFocusDone, pomoA11yBreakOver
@@ -155,23 +156,26 @@ final class LanguageSettings: ObservableObject {
         language = stored.flatMap(AppLanguage.init(rawValue:)) ?? .system
     }
 
-    func t(_ key: L10nKey) -> String {
-        let entry = Self.table[key] ?? ("?", "?", "?")
-        switch language.resolved {
-        case .traditionalChinese: return entry.hant
-        case .simplifiedChinese: return entry.hans
-        default: return entry.en
-        }
-    }
+    func t(_ key: L10nKey) -> String { Self.text(key, language: language) }
 
-    /// Fills `%@` placeholders in order.
-    func t(_ key: L10nKey, _ args: String...) -> String {
-        var result = t(key)
-        for arg in args {
+    static func text(_ key: L10nKey, language: AppLanguage, arguments: [String] = []) -> String {
+        let entry = Self.table[key] ?? ("?", "?", "?")
+        var result: String
+        switch language.resolved {
+        case .traditionalChinese: result = entry.hant
+        case .simplifiedChinese: result = entry.hans
+        default: result = entry.en
+        }
+        for arg in arguments {
             guard let range = result.range(of: "%@") else { break }
             result.replaceSubrange(range, with: arg)
         }
         return result
+    }
+
+    /// Fills `%@` placeholders in order.
+    func t(_ key: L10nKey, _ args: String...) -> String {
+        Self.text(key, language: language, arguments: args)
     }
 
     var locale: Locale {
@@ -693,7 +697,7 @@ final class LanguageSettings: ObservableObject {
         .updVerified: ("Saved to %@. Its size and SHA-256 match what GitHub lists for this release file.", "已儲存到 %@。檔案大小與 SHA-256 和 GitHub 為此發行檔列出的一致。", "已保存到 %@。文件大小与 SHA-256 和 GitHub 为此发行文件列出的一致。"),
         .updAuthenticity: ("A matching checksum shows this is the file attached to the GitHub release and that it wasn’t damaged on the way. It doesn’t prove who built it: Notch Island releases are ad-hoc signed and not notarized by Apple.", "校驗碼相符代表這是附在 GitHub 發行版上的檔案，而且傳輸中沒有損壞；但無法證明是誰建置的：瀏海島的發行版是 ad-hoc 簽章，未經 Apple 公證。", "校验码相符代表这是附在 GitHub 发行版上的文件，且传输中没有损坏；但无法证明是谁构建的：刘海岛的发行版是 ad-hoc 签名，未经 Apple 公证。"),
         .updSteps: ("To install: 1. Optional but recommended: Back Up Current App. 2. Open Disk Image. 3. Quit Notch Island (menu bar icon › Quit). 4. Drag Notch Island onto Applications and choose Replace, or Keep Both to keep the old copy as well. 5. Open the new version. Settings, clipboard history and Keychain items live in your user account and stay as they are. Permissions (Accessibility, Microphone, Screen & System Audio Recording…) may need to be granted again, because macOS treats each ad-hoc build as a new app.", "安裝步驟：1. 建議先按「備份目前的 App」。2. 按「打開磁碟映像檔」。3. 結束瀏海島（選單列圖示 › 結束）。4. 把瀏海島拖到「應用程式」，選擇「取代」；或選「兩者都保留」同時留下舊版。5. 打開新版本。設定、剪貼簿紀錄與鑰匙圈項目存在你的使用者帳號中，不會改變。輔助使用、麥克風、螢幕與系統錄音等權限可能需要重新授予，因為 macOS 會把每個 ad-hoc 建置視為新的 App。", "安装步骤：1. 建议先点按“备份当前 App”。2. 点按“打开磁盘映像”。3. 退出刘海岛（菜单栏图标 › 退出）。4. 把刘海岛拖到“应用程序”，选择“替换”；或选“保留两者”同时留下旧版。5. 打开新版本。设置、剪贴板记录和钥匙串项目存在你的用户账户中，不会改变。辅助功能、麦克风、录屏与系统录音等权限可能需要重新授予，因为 macOS 会把每个 ad-hoc 构建视为新的 App。"),
-        .updGatekeeper: ("macOS will block the new version the first time because it isn’t notarized. If you trust this release, open System Settings › Privacy & Security and click Open Anyway. Notch Island doesn’t remove the quarantine flag or bypass Gatekeeper.", "新版本未經公證，第一次開啟時 macOS 會阻擋。若你信任這個發行版，請到「系統設定」›「隱私權與安全性」按「仍要打開」。瀏海島不會移除隔離標記，也不會繞過 Gatekeeper。", "新版本未经公证，第一次打开时 macOS 会阻止。若你信任这个发行版，请前往“系统设置”›“隐私与安全”点按“仍要打开”。刘海岛不会移除隔离标记，也不会绕过 Gatekeeper。"),
+        .updGatekeeper: ("macOS may block the first launch of an unnotarized build. If you trust this release, see System Settings › Privacy & Security › Open Anyway. The macOS download quarantine and Gatekeeper checks stay in place.", "如果版本未經公證，macOS 可能阻擋首次啟動。若你信任這個發行版，請到「系統設定」›「隱私權與安全性」›「仍要打開」。更新會保留下載隔離標記及 Gatekeeper 檢查。", "如果版本未经公证，macOS 可能阻止首次启动。若你信任这个发行版，请前往“系统设置”›“隐私与安全”›“仍要打开”。更新会保留下载隔离标记及 Gatekeeper 检查。"),
         .updBackup: ("Back Up Current App", "備份目前的 App", "备份当前 App"),
         .updOpenDMG: ("Open Disk Image", "打開磁碟映像檔", "打开磁盘映像"),
         .updShowInFinder: ("Show in Finder", "在 Finder 中顯示", "在访达中显示"),
@@ -703,7 +707,7 @@ final class LanguageSettings: ObservableObject {
         .updBackupNotApp: ("this copy isn’t running from an .app bundle", "這份程式不是從 .app 套件執行", "此程序不是从 .app 包运行"),
         .updLocTranslocated: ("This copy runs from a temporary read-only location that macOS uses for apps not moved after download (App Translocation). Move Notch Island into Applications and reopen it before updating; this copy can’t be replaced.", "這份 App 正從 macOS 為「下載後未搬移的 App」使用的暫時唯讀位置執行（App Translocation）。更新前請先把瀏海島移到「應用程式」並重新開啟；這份無法被取代。", "此 App 正从 macOS 为“下载后未移动的 App”使用的临时只读位置运行（App Translocation）。更新前请先把刘海岛移到“应用程序”并重新打开；此副本无法被替换。"),
         .updLocReadOnly: ("This copy runs from a read-only volume (for example the disk image). Install into Applications first; it can’t be replaced where it is.", "這份 App 正從唯讀磁碟區執行（例如磁碟映像檔）。請先安裝到「應用程式」；無法在原處取代。", "此 App 正从只读宗卷运行（例如磁盘映像）。请先安装到“应用程序”；无法在原处替换。"),
-        .updLocNeedsAdmin: ("Current app folder: %@. Replacing the app there may ask for an administrator password.", "目前 App 所在資料夾：%@。在這裡取代 App 可能需要管理者密碼。", "当前 App 所在文件夹：%@。在此处替换 App 可能需要管理员密码。"),
+        .updLocNeedsAdmin: ("Updating the app in %@ may require an administrator password.", "在 %@ 更新 App 可能需要管理員密碼。", "在 %@ 更新 App 可能需要管理员密码。"),
         .updLocCurrent: ("Current app: %@", "目前的 App：%@", "当前 App：%@"),
         .updProblemMissing: ("file not found", "找不到檔案", "找不到文件"),
         .updProblemDuplicate: ("more than one file with that name", "有多個同名檔案", "有多个同名文件"),
@@ -727,6 +731,9 @@ final class LanguageSettings: ObservableObject {
         .updChecksumMismatch: ("The download’s SHA-256 doesn’t match GitHub’s digest. It was deleted; nothing was installed.", "下載檔案的 SHA-256 與 GitHub 的摘要不符，已刪除；沒有安裝任何東西。", "下载文件的 SHA-256 与 GitHub 的摘要不符，已删除；没有安装任何东西。"),
         .updDisk: ("Couldn’t save the download: %@", "無法儲存下載的檔案：%@", "无法保存下载的文件：%@"),
         .updDownloadCancelled: ("Download cancelled; the partial file was deleted.", "已取消下載，未完成的檔案已刪除。", "已取消下载，未完成的文件已删除。"),
+        .updInstallRestart: ("Install Update…", "安裝更新…", "安装更新…"),
+        .updNoSignedFeed: ("This release has no signed feed for in-app installation. You can download the disk image for Finder.", "這個發行版沒有可在 App 內安裝的已簽章更新清單。你可以下載映像檔後在 Finder 安裝。", "此发行版没有可在 App 内安装的已签名更新清单。你可以下载映像文件后在访达安装。"),
+        .updInstallError: ("Could not open the installer. %@", "無法啟動更新安裝程式。%@", "无法启动更新安装程序。%@"),
         // 0.1.3: Pomodoro
         .pomodoro: ("Pomodoro", "番茄鐘", "番茄钟"),
         .pomoFocus: ("Focus", "專注", "专注"),

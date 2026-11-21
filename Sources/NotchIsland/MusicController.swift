@@ -43,18 +43,36 @@ final class MusicController: ObservableObject {
         var duration: TimeInterval?
     }
 
+    /// The frequently updated sample is observed by the progress row alone.
+    @MainActor
+    final class PlaybackTime: ObservableObject {
+        struct Sample: Equatable { var position: TimeInterval; var date: Date }
+
+        @Published private(set) var sample: Sample?
+
+        func update(position: TimeInterval?, date: Date, isPlaying: Bool) {
+            guard let position else {
+                if sample != nil { sample = nil }
+                return
+            }
+            let next = Sample(position: position, date: date)
+            if sample?.position != position || (isPlaying && sample != next) { sample = next }
+        }
+    }
+
     @Published private(set) var source: Source?
     @Published private(set) var track: Track?
     @Published private(set) var isPlaying = false
+    @Published private(set) var isFreshPlayback = false
     @Published private(set) var artwork: NSImage? {
         // Album-cover colours for the music gradient and level bars (local, 24×24 sample).
         didSet { if artwork !== oldValue { palette = artwork.flatMap(ArtworkPalette.extract(from:)) } }
     }
     @Published private(set) var palette: ArtworkPalette?
     @Published private(set) var permissionDenied = false
-    /// Player position at `positionDate`; the UI extrapolates while playing.
-    @Published private(set) var position: TimeInterval?
-    @Published private(set) var positionDate = Date()
+    /// The progress row extrapolates from the player’s latest timestamp.
+    let playbackTime = PlaybackTime()
+    var position: TimeInterval? { playbackTime.sample?.position }
     @Published private(set) var trackIdentity = ""
     @Published private(set) var seekFailed = false
     private var browserVideoID: String?
@@ -76,8 +94,16 @@ final class MusicController: ObservableObject {
     @Published private(set) var enabledBrowsers: Set<BrowserMedia.Browser>
     /// Whether a control could not be delivered (e.g. tab closed); cleared on next refresh.
     @Published private(set) var lastControlFailed = false
-    /// Last scan per browser: counts only (no URLs/titles), shown in Settings.
-    @Published private(set) var browserDiagnostics: [BrowserMedia.Browser: BrowserMedia.Diagnostics] = [:]
+    /// The date changes on every browser scan. Only the Settings section observes it.
+    @MainActor
+    final class BrowserDiagnostics: ObservableObject {
+        @Published private(set) var scans: [BrowserMedia.Browser: BrowserMedia.Diagnostics] = [:]
+
+        func update(_ next: [BrowserMedia.Browser: BrowserMedia.Diagnostics]) {
+            if scans != next { scans = next }
+        }
+    }
+    let browserDiagnostics = BrowserDiagnostics()
 
     /// Progress samples between scans; only touched on `scriptQueue`.
     private final class HistoryBox: @unchecked Sendable { var value = BrowserMedia.History() }
@@ -228,7 +254,7 @@ final class MusicController: ObservableObject {
         }
     }
 
-    private let scriptQueue = DispatchQueue(label: "NotchIsland.AppleScript", qos: .userInitiated)
+    private let scriptQueue = DispatchQueue(label: "NotchIsland.AppleScript", qos: .userInitiated, autoreleaseFrequency: .workItem)
     private var pollTask: Task<Void, Never>?
     private var artworkKey: String?
     private var observers: [NSObjectProtocol] = []
@@ -290,7 +316,13 @@ final class MusicController: ObservableObject {
         }
     }
 
+    func updatePlaybackFreshness(at date: Date = Date()) {
+        let fresh = isActivelyPlaying(at: date)
+        if isFreshPlayback != fresh { isFreshPlayback = fresh }
+    }
+
     private func pollPlayback() {
+        updatePlaybackFreshness()
         guard !refreshInFlight, !tabReadInFlight else { return }
         let uptime = ProcessInfo.processInfo.systemUptime
         let discoveryInterval = enabledBrowsers.isEmpty ? 3.0 : (browserTab != nil && isPlaying ? 2.75 : 1.1)
@@ -385,7 +417,9 @@ final class MusicController: ObservableObject {
             return
         }
         let now = Date()
-        let estimatedPosition = position.map { $0 + (isPlaying ? max(0, now.timeIntervalSince(positionDate)) : 0) }
+        let estimatedPosition = playbackTime.sample.map {
+            $0.position + (isPlaying ? max(0, now.timeIntervalSince($0.date)) : 0)
+        }
         let command = tracker.issue(kind, observedPlaying: isPlaying, trackKey: trackIdentity, now: now,
                                     position: browserSite == .youtubeMusic ? estimatedPosition : nil)
         latestCommand.set(command.id)
@@ -535,7 +569,7 @@ final class MusicController: ObservableObject {
         if pendingPlaying != pending { pendingPlaying = pending }
         if controlPending != tracker.isPending { controlPending = tracker.isPending }
         if controlOutcome != tracker.lastOutcome { controlOutcome = tracker.lastOutcome }
-        if tracker.lastOutcome == .failed { lastControlFailed = true }
+        if tracker.lastOutcome == .failed && !lastControlFailed { lastControlFailed = true }
     }
 
     /// Quick follow-up reads until the player is seen in the requested state
@@ -636,6 +670,7 @@ final class MusicController: ObservableObject {
         }
         guard trySystem || !running.isEmpty || !browsers.isEmpty else {
             if !browserIssues.isEmpty { browserIssues = [:] }
+            browserDiagnostics.update([:])
             apply(nil)
             return
         }
@@ -656,9 +691,9 @@ final class MusicController: ObservableObject {
                     MainActor.assumeIsolated {
                         guard let self else { return }
                         self.finishRefresh()
-                        self.systemNowPlayingWorks = true
+                        if !self.systemNowPlayingWorks { self.systemNowPlayingWorks = true }
                         if self.systemAppName != appName { self.systemAppName = appName }
-                        self.permissionDenied = false
+                        if self.permissionDenied { self.permissionDenied = false }
                         self.apply(snapshot)
                     }
                 }
@@ -742,9 +777,10 @@ final class MusicController: ObservableObject {
                 MainActor.assumeIsolated {
                     guard let self else { return }
                     self.finishRefresh()
-                    self.permissionDenied = denied && chosen == nil
+                    let permissionDenied = denied && chosen == nil
+                    if self.permissionDenied != permissionDenied { self.permissionDenied = permissionDenied }
                     if self.browserIssues != issues { self.browserIssues = issues }
-                    if self.browserDiagnostics != diagnostics { self.browserDiagnostics = diagnostics }
+                    self.browserDiagnostics.update(diagnostics)
                     self.apply(chosen)
                 }
             }
@@ -770,7 +806,8 @@ final class MusicController: ObservableObject {
             if track != nil { track = nil }
             if isPlaying { isPlaying = false }
             if artwork != nil { artwork = nil }
-            position = nil
+            playbackTime.update(position: nil, date: .distantPast, isPlaying: false)
+            updatePlaybackFreshness()
             if !trackIdentity.isEmpty { trackIdentity = "" }
             browserVideoID = nil
             // Keep the time resolver's memory: during a song change the page can
@@ -827,8 +864,8 @@ final class MusicController: ObservableObject {
         }
         if track != newTrack { track = newTrack }
         if isPlaying != snapshot.isPlaying { isPlaying = snapshot.isPlaying }
-        position = newPosition
-        positionDate = snapshot.sampledAt
+        playbackTime.update(position: newPosition, date: snapshot.sampledAt, isPlaying: snapshot.isPlaying)
+        updatePlaybackFreshness()
 
         systemArtwork = snapshot.artworkData
         let key = "\(trackKey)|\(artworkURL?.absoluteString ?? "")"

@@ -90,8 +90,8 @@ struct IslandShape: Shape {
 
 struct IslandRootView: View {
     @ObservedObject var model: IslandViewModel
-    @ObservedObject var timer: CountdownTimer
-    @ObservedObject var music: MusicController
+    let timer: CountdownTimer
+    let music: MusicController
     @ObservedObject var lang: LanguageSettings
     let stopwatch: Stopwatch
     let battery: BatteryMonitor
@@ -202,19 +202,15 @@ struct CompactContent: View {
 
     var body: some View {
         let notch = model.geometry.notchSize
-        // Re-evaluated every 2 s so a music source that stopped reporting ("stale")
-        // hands the left side back to the Pomodoro.
-        TimelineView(.periodic(from: .now, by: 2)) { context in
-            let layout = layout(at: context.date)
-            HStack(spacing: 0) {
-                slot(layout.leading, leading: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.leading, 10)
-                Color.clear.frame(width: notch.width)
-                slot(layout.trailing, leading: false)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-                    .padding(.trailing, 10)
-            }
+        let layout = layout()
+        HStack(spacing: 0) {
+            slot(layout.leading, leading: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, 10)
+            Color.clear.frame(width: notch.width)
+            slot(layout.trailing, leading: false)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(.trailing, 10)
         }
         .frame(height: notch.height)
         .contentShape(Rectangle())
@@ -222,13 +218,12 @@ struct CompactContent: View {
     }
 
     @EnvironmentObject var stopwatch: Stopwatch
-    @EnvironmentObject var audioMonitor: AudioLevelMonitor
 
     /// See `CompactLayout`. Without a Pomodoro this is the 0.1.2 layout, unchanged.
-    private func layout(at date: Date) -> CompactLayout {
+    private func layout() -> CompactLayout {
         let live = pomodoro.isLive
         return CompactLayout.resolve(toast: model.toast != nil,
-                                     musicPlaying: live ? music.isActivelyPlaying(at: date) : music.isPlaying,
+                                     musicPlaying: live ? music.isFreshPlayback : music.isPlaying,
                                      timer: timer.phase, stopwatchActive: stopwatch.isActive, pomodoroLive: live)
     }
 
@@ -243,7 +238,7 @@ struct CompactContent: View {
         case .artwork:
             ArtworkView(image: music.artwork, size: max(16, model.geometry.notchSize.height - 12), corner: 5)
         case .musicBars:
-            MusicBars(isPlaying: music.isPlaying, palette: music.palette, realLevels: audioMonitor.levels)
+            LiveMusicBars(isPlaying: music.isPlaying, palette: music.palette)
         case .timerIcon:
             Image(systemName: timer.phase == .finished ? "bell.fill" : "timer")
                 .font(.system(size: 13, weight: .semibold))
@@ -409,7 +404,6 @@ struct MusicPanel: View {
     @ObservedObject var music: MusicController
     @ObservedObject var lang: LanguageSettings
     @EnvironmentObject var model: IslandViewModel
-    @EnvironmentObject var audioMonitor: AudioLevelMonitor
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
@@ -425,7 +419,7 @@ struct MusicPanel: View {
                             .font(.system(size: 9.5, weight: .semibold))
                             .foregroundStyle(.white.opacity(0.45))
                             .textCase(.uppercase)
-                        MusicBars(isPlaying: music.isPlaying, palette: music.palette, realLevels: audioMonitor.levels)
+                        LiveMusicBars(isPlaying: music.isPlaying, palette: music.palette)
                     }
                     Text(track.title)
                         .font(.system(size: 13, weight: .semibold))
@@ -434,7 +428,7 @@ struct MusicPanel: View {
                         .font(.system(size: 11))
                         .foregroundStyle(.white.opacity(0.6))
                         .lineLimit(1)
-                    ProgressLine(music: music, lang: lang, trackIdentity: music.trackIdentity)
+                    ProgressLine(music: music, lang: lang, playbackTime: music.playbackTime, trackIdentity: music.trackIdentity)
                         .id(music.trackIdentity)
                         .padding(.top, 3)
                     controls.padding(.top, 2)
@@ -574,6 +568,7 @@ struct MusicPanel: View {
 struct ProgressLine: View {
     @ObservedObject var music: MusicController
     @ObservedObject var lang: LanguageSettings
+    @ObservedObject var playbackTime: MusicController.PlaybackTime
     let trackIdentity: String
     @State private var isDragging = false
     @State private var preview: TimeInterval?
@@ -581,10 +576,10 @@ struct ProgressLine: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             if let duration = music.track?.duration, duration.isFinite, duration > 0,
-               let base = music.position {
+               let sample = playbackTime.sample {
                 let running = music.isPlaying && music.pendingPlaying != false
-                let elapsed = running ? max(0, context.date.timeIntervalSince(music.positionDate)) : 0
-                let current = min(duration, max(0, preview ?? (base + elapsed)))
+                let elapsed = running ? max(0, context.date.timeIntervalSince(sample.date)) : 0
+                let current = min(duration, max(0, preview ?? (sample.position + elapsed)))
                 HStack(spacing: 6) {
                     Text(CountdownTimer.formatElapsed(current))
                     if music.canSeek {

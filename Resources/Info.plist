@@ -25,9 +25,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1.3</string>
+	<string>0.1.4</string>
 	<key>CFBundleVersion</key>
-	<string>9</string>
+	<string>10</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>LSUIElement</key>
@@ -46,5 +46,19 @@
 	<string>Notch Island uses an approximate location to show local weather when requested.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Notch Island uses the microphone only after you press Music Recognition: by default about 12 seconds are uploaded to Song Finder (songfinder.dev), a third-party service, after you agree; with Shazam up to 30 seconds (not stored); or—only if you choose AudD—up to 10 seconds uploaded to AudD.</string>
+	<key>SUAllowsAutomaticUpdates</key>
+	<false/>
+	<key>SUEnableAutomaticChecks</key>
+	<false/>
+	<key>SUPublicEDKey</key>
+	<string>VXpMh1rsu8eu5u5LQJsiOPL+GEU9oL5RWp7BGsNzbek=</string>
+	<key>SURequireSignedFeed</key>
+	<true/>
+	<key>SUSendProfileInfo</key>
+	<false/>
+	<key>SUSignedFeedFailureExpirationInterval</key>
+	<integer>0</integer>
+	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
 </dict>
 </plist>
